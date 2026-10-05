@@ -239,9 +239,9 @@ I wanted to replicate these three main findings in my project.
   
 The main experimental conditions in this study were whether a participant saw expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I used the same stimuli, e.g photos and scenario wording, as the original authors. The measures included 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I preregistered was a path analysis model with two levels (a within-individuals level and between-individuals level) that used a MCMC Bayesian estimation approach.   
   
-One of the main challenges I predicted before starting the replication project was that I would not find the same results due to a difference in sample population, The original sample consisted of participants from the UK, whereas our sample consisted of participants from the US. As prior research indicated that there may be cross-national differences in the emotional content people spread online, there was a possibility that the results may be different due to this change. 
+One of the main challenges I predicted before starting the replication project was that I would not find the same results due to a difference in sample population. The original sample consisted of participants from the UK, whereas our sample consisted of participants from the US. As prior research indicated that there may be cross-national differences in the emotional content people spread online, there was a possibility that the sample difference may contribute to different results. 
   
-A possible extension to this project would be to explore whether these effects still hold in a country with different cultural values (e.g East Asian contexts), as I am also interested in investigating how ideal affect is different across different cultures. 
+A possible extension to this project would be to explore whether these effects still hold in contexts with very different cultural defaults, e.g East Asian contexts. I could also potentially look at negative comments or dislikes as a form of engagement, and explore how that shapes people's emotional responses to their posts.  
 
 ## Methods
 
