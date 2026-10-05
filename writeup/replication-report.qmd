@@ -1,7 +1,7 @@
 ---
-title: "Replication of Problems 1 and 2 of Tversky & Kahneman (1981, *Science*)"
-author: "Your Name (your.email@stanford.edu)"
-date: today
+title: "Replication of Stsiampkouskaya et al. (2021, *Computers in Human Behavior*)"
+author: "Debbie Lim (limdyv@stanford.edu)"
+date: 10/4/26
 date-format: long
 format:
   html:
@@ -75,8 +75,7 @@ original_p_loss <- original$risky[original$condition == "loss"] / original$n[ori
 ::: {.callout-note appearance="simple" icon=false}
 ## Project links
 
-- **Original paper:** Tversky, A., & Kahneman, D. (1981). The framing of decisions and the
-  psychology of choice. *Science, 211*(4481), 453–458. <https://doi.org/10.1126/science.7455683>
+- **Original paper:** Stsiampkouskaya, K., Joinson, A., Piwek, L., & Ahlbom, C.-P. (2021). Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model. Computers in Human Behavior, 124, 106940. https://doi.org/10.1016/j.chb.2021.106940
 - **Preregistration:** [OSF registration](https://osf.io/XXXXX) *(registered YYYY-MM-DD, before final data collection)*
 - **Live experiment:** <https://psych251.github.io/your-repo/> (take the study exactly as participants did)
 - **Repository:** <https://github.com/psych251/your-repo> (experiment code, data, and this report)
@@ -86,9 +85,6 @@ original_p_loss <- original$risky[original$condition == "loss"] / original$n[ori
 
 ::: {.callout-tip icon=false}
 ## Guidance
-
-This statement comes first so a reader knows how the work was produced before reading it. Keep
-it current from the start of the project rather than reconstructing it at the end.
 
 **Course policy: you write all of the text in this report yourself.** AI tools may help with
 code, and may comment on drafts you have written, but they may not write, rewrite or paraphrase
@@ -103,9 +99,9 @@ tools, replace the table with a sentence saying so.
 
 | Tool and model | What it was used for | How you checked the output |
 |---|---|---|
-| *e.g., Claude Code (Claude Opus 5)* | *Implemented the experiment from the original Methods section* | *Ran the automated tests; took the study myself; compared every screen with the original materials* |
-| *e.g., Claude Code (Claude Opus 5)* | *Drafted the analysis code* | *Checked the exclusion counts by hand; confirmed the key test matches the preregistration* |
-| *e.g., ChatGPT* | *Comments on my draft of the Introduction (no text generated)* | *Decided which comments to act on and made every change myself; checked any factual claim against the source* |
+
+
+I did not use any AI tools during the proposal stage of this project.
 
 I wrote all of the text in this report myself. AI tools were not used to write, rewrite or
 paraphrase it, and were not used to generate, alter, or impute any participant data. I take full
@@ -238,12 +234,18 @@ bind_rows(
 ## Introduction
 
 ::: {.callout-tip icon=false}
-## Guidance
 
-One or two paragraphs, no abstract and no literature review: that is in the original paper.
-Say what the original study found, which specific finding you are replicating, and why it
-matters to you. Write the Introduction and Methods in the past tense, even though you write
-them before collecting data.
+I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I am interested in investigating the emotions people want to feel and actually feel online. This project will assist in my goals of understanding the research process for studies in this field, and to improve my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In this study, the researchers found that:  
+  
+  1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
+  2. Posting frequecy was increased if users felt more excitement after receiving more engagement than expected.   
+  3. The content of their posts were also more likely to be of the same type if they received more engagement than expected.   
+I would like to replicate these three main findings in this project.   
+  
+The main experimental conditions in this study are whether a participant sees expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I will be using the same stimuli, e.g photos and scenario wording, as the original authors. The measures include 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I expect to preregister is a path analysis model with two levels (a within-individuals level and between-individuals level) that uses a MCMC Bayesian estimation approach.  
+  
+A possible extension to this project would be to explore whether these effects still hold in a country with different cultural values (e.g East Asian contexts), as I am also interested in investigating how ideal affect is different across different cultures. 
+
 :::
 
 ## Methods
