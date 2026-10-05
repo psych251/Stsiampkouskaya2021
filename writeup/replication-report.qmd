@@ -97,10 +97,6 @@ column: say what you verified yourself, not that the output "looked right". If y
 tools, replace the table with a sentence saying so.
 :::
 
-| Tool and model | What it was used for | How you checked the output |
-|---|---|---|
-
-
 I did not use any AI tools during the proposal stage of this project.
 
 I wrote all of the text in this report myself. AI tools were not used to write, rewrite or
@@ -233,8 +229,6 @@ bind_rows(
 
 ## Introduction
 
-::: {.callout-tip icon=false}
-
 I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I am interested in investigating the emotions people want to feel and actually feel online. This project will assist in my goals of understanding the research process for studies in this field, and to improve my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In this study, the researchers found that:  
   
   1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
@@ -245,8 +239,6 @@ I would like to replicate these three main findings in this project.
 The main experimental conditions in this study are whether a participant sees expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I will be using the same stimuli, e.g photos and scenario wording, as the original authors. The measures include 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I expect to preregister is a path analysis model with two levels (a within-individuals level and between-individuals level) that uses a MCMC Bayesian estimation approach.  
   
 A possible extension to this project would be to explore whether these effects still hold in a country with different cultural values (e.g East Asian contexts), as I am also interested in investigating how ideal affect is different across different cultures. 
-
-:::
 
 ## Methods
 
