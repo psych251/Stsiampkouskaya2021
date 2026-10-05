@@ -229,14 +229,17 @@ bind_rows(
 
 ## Introduction
 
-I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I am interested in investigating the emotions people want to feel and actually feel online. This project will assist in my goals of understanding the research process for studies in this field, and to improve my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In this study, the researchers found that:  
+I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I was interested in investigating the emotions people want to feel and actually feel online. This project assisted in my goals of understanding the research process for studies in this field, and improved my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In the original study, the researchers found that:  
   
   1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
   2. Posting frequecy was increased if users felt more excitement after receiving more engagement than expected.   
   3. The content of their posts were also more likely to be of the same type if they received more engagement than expected.   
-I would like to replicate these three main findings in this project.   
   
-The main experimental conditions in this study are whether a participant sees expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I will be using the same stimuli, e.g photos and scenario wording, as the original authors. The measures include 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I expect to preregister is a path analysis model with two levels (a within-individuals level and between-individuals level) that uses a MCMC Bayesian estimation approach.  
+I wanted to replicate these three main findings in my project.   
+  
+The main experimental conditions in this study were whether a participant saw expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I used the same stimuli, e.g photos and scenario wording, as the original authors. The measures included 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I preregistered was a path analysis model with two levels (a within-individuals level and between-individuals level) that used a MCMC Bayesian estimation approach.   
+  
+One of the main challenges I predicted before starting the replication project was that I would not find the same results due to a difference in sample population, The original sample consisted of participants from the UK, whereas our sample consisted of participants from the US. As prior research indicated that there may be cross-national differences in the emotional content people spread online, there was a possibility that the results may be different due to this change. 
   
 A possible extension to this project would be to explore whether these effects still hold in a country with different cultural values (e.g East Asian contexts), as I am also interested in investigating how ideal affect is different across different cultures. 
 
