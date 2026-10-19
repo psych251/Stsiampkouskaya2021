@@ -423,6 +423,22 @@ The association between high arousal positive emotions and the more engagement t
 |---|---|---|---|
 | Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demostrate that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
 | Wording | Currently unknown wording in study scenario | "Imagine you have just returned from a trip, and decide to share an image on Instagram. Of the three images below, which would you select to post?" | Not sure? Unless the vignettes are vastly different in the original study, I don't think there would be too much variation based on wording. |
+| Data analysis language | MPlus | R, using the brms package | Not sure? See below for similarities and differences after Claude created the path analysis model code in R.  |
+
+*According to Claude:* 
+
+How it maps to the paper:
+
+Within level: the more and less dummies (expected engagement as the reference) predict the four emotions, and the emotions predict posting frequency and content change. These are the a paths, b paths and direct effects.
+Between level: the random intercept per participant, plus the person-level covariates in the two behaviour equations, stand in for the between-individuals level.
+Indirect effects: computed from the posterior draws as a × b. The original authors' credible intervals come straight from the product distribution, so no normality assumption is needed.
+
+Differences from the Mplus model
+
+Mplus decomposes variance into within and between parts automatically (latent mean centring). Here I person-mean centred the emotions by hand, so estimates will be close but not identical.
+The paper’s within-level covariates have no within-person variance, which is why their Table 5 coefficients sit at about 0 with p ≈ .5. Including them once as person-level predictors is equivalent in spirit.
+Coefficients for posting frequency and content change are on the probit scale per slider point, and the indirect effects are in those units. The paper reports Mplus standardised coefficients, so the numbers won’t match theirs directly.
+
 
 ### Methods addendum (post data collection)
 
