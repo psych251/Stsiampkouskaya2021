@@ -20,9 +20,7 @@ execute:
 <!--
 PSYCH 251 replication report template.
 
-Every project uses this structure so that reports are comparable across the class. They
-become public supplementary material, so write for a reader who has the original paper but
-not your repository.
+Every project uses this structure so that reports are comparable across the class. They become public supplementary material, so write for a reader who has the original paper but not your repository.
 
 The project has two phases, and so does this report:
   Phase 1, the replication. Introduction and Methods are written, critiqued and preregistered
@@ -57,19 +55,36 @@ experiment_id_phase2 <- "framing-demo-phase2"
 #| label: original-study
 #| include: false
 # The original study's numbers, entered once and used by the power analysis, the Key
-# statistics table, and the side-by-side figures. Replace these with your original study's
-# values, and say in a comment exactly where in the paper each one comes from.
+# statistics table, and the side-by-side figures.
 #
-# Tversky & Kahneman (1981), Problem 1 (gain frame, N = 152): 72% chose the certain program,
-# 28% the risky one. Problem 2 (loss frame, N = 155): 22% certain, 78% risky. The paper
-# reports percentages, so the counts below are reconstructed from them.
+# Stsiampkouskaya et al. (2021)
+# Within-subject online experiment: every participant completed three conditions
+# (expected, more-than-expected, less-than-expected engagement) and rated their emotions
+# on 0-100 sliders. Outcome here: high-arousal positive affect (mean of "excited" and
+# "enthusiastic"). The effects come from the within-individuals level of the Mplus
+# two-level Bayesian path model, with the expected-engagement condition as the reference.
+library(tidyverse)
+library(pwr)
+
 original <- tibble(
-  condition = c("gain", "loss"),
-  n         = c(152, 155),
-  risky     = round(c(0.28 * 152, 0.78 * 155))
+  n         = 248,     # final sample, Section 3.1 (and abstract)
+  b_more    = 17.521,  # unstandardised effect of more-than-expected engagement on
+                       # high-arousal positive affect, slider points; Appendix B, Table 3
+  beta_more = 0.257,   # standardised effect of the same path; Appendix B, Table 4
+                       # (reported as 0.26 in Section 4.1)
+  b_less    = -28.060  # unstandardised effect of less-than-expected engagement on
+                       # high-arousal positive affect; Appendix B, Table 3. Used only to
+                       # work out the residual variance, not as the tested effect.
 )
-original_p_gain <- original$risky[original$condition == "gain"] / original$n[original$condition == "gain"]
-original_p_loss <- original$risky[original$condition == "loss"] / original$n[original$condition == "loss"]
+
+# The paper does not report a paired effect size, so d_z is derived from the model
+# coefficients. Assumes three equally sized conditions (true by design, since every
+# participant saw all three) and that Mplus standardised with the within-level variance.
+sd_x    <- sqrt((1/3) * (2/3))                                 # SD of a balanced 3-level dummy
+sd_y    <- original$b_more * sd_x / original$beta_more         # within-level SD of the outcome (~32.1)
+var_exp <- var(c(0, original$b_more, original$b_less)) * (2/3) # variance explained by condition (~352)
+sd_res  <- sqrt(sd_y^2 - var_exp)                              # within-person residual SD (~26.1)
+original_dz <- original$b_more / (sqrt(2) * sd_res)            # paired effect size (~0.47)
 ```
 
 ::: {.callout-note appearance="simple" icon=false}
@@ -77,8 +92,8 @@ original_p_loss <- original$risky[original$condition == "loss"] / original$n[ori
 
 - **Original paper:** Stsiampkouskaya, K., Joinson, A., Piwek, L., & Ahlbom, C.-P. (2021). Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model. Computers in Human Behavior, 124, 106940. https://doi.org/10.1016/j.chb.2021.106940
 - **Preregistration:** [OSF registration](https://osf.io/XXXXX) *(registered YYYY-MM-DD, before final data collection)*
-- **Live experiment:** <https://psych251.github.io/your-repo/> (take the study exactly as participants did)
-- **Repository:** <https://github.com/psych251/your-repo> (experiment code, data, and this report)
+- **Live experiment:** <https://stanforduniversity.qualtrics.com/jfe/form/SV_0vaRIrjek5Xb4Zo>
+- **Repository:** <https://github.com/psych251/Stsiampkouskaya2021> (experiment code, data, and this report)
 :::
 
 # AI use statement
@@ -97,11 +112,10 @@ column: say what you verified yourself, not that the output "looked right". If y
 tools, replace the table with a sentence saying so.
 :::
 
-I did not use any AI tools during the proposal stage of this project.
+- I did not use any AI tools during the proposal stage of this project. 
+- I used Claude to assist me with the power analysis calculation in the Methods section, and to generate the code to run the path analysis model in R in the Results section, during the Pilot A stage. 
 
-I wrote all of the text in this report myself. AI tools were not used to write, rewrite or
-paraphrase it, and were not used to generate, alter, or impute any participant data. I take full
-responsibility for the content of this report, including any errors introduced by AI tools.
+I wrote all of the text in this report myself. AI tools were not used to write, rewrite or paraphrase it, and were not used to generate, alter, or impute any participant data. I take full responsibility for the content of this report, including any errors introduced by AI tools.
 
 # Key statistics
 
@@ -116,6 +130,25 @@ exclusion rule. On the scientific-extension track, the Phase 2 row reports the n
 adapt its code and say so in the caption.
 :::
 
+
+```{r}
+#| label: original-study-demo
+#| include: false
+# The original study's numbers, entered once and used by the power analysis, the Key
+# statistics table, and the side-by-side figures. Replace these with your original study's
+# values, and say in a comment exactly where in the paper each one comes from.
+#
+# Tversky & Kahneman (1981), Problem 1 (gain frame, N = 152): 72% chose the certain program,
+# 28% the risky one. Problem 2 (loss frame, N = 155): 22% certain, 78% risky. The paper
+# reports percentages, so the counts below are reconstructed from them.
+original <- tibble(
+  condition = c("gain", "loss"),
+  n         = c(152, 155),
+  risky     = round(c(0.28 * 152, 0.78 * 155))
+)
+original_p_gain <- original$risky[original$condition == "gain"] / original$n[original$condition == "gain"]
+original_p_loss <- original$risky[original$condition == "loss"] / original$n[original$condition == "loss"]
+```
 ```{r}
 #| label: analysis-functions
 #| code-summary: "Show the analysis code (shared by Phase 1 and Phase 2)"
@@ -247,114 +280,149 @@ A possible extension to this project would be to explore whether these effects s
 
 ### Power analysis
 
-::: {.callout-tip icon=false}
-## Guidance
+```{r}
+#| label: original-values
+library(tidyverse)
+library(pwr)
 
-Report the original effect size, the sample needed for 80%, 90% and 95% power to detect it,
-and the sample you chose and why. The table below is computed from the original study's
-numbers entered at the top of this file.
+# Original study values (Stsiampkouskaya et al., 2021, Tables 3-4):
+# more-than-expected engagement -> high-arousal positive affect
+original <- list(
+  n         = 248,       # participants (each saw all three conditions)
+  b_more    = 17.521,    # unstandardised effect, 0-100 slider points
+  beta_more = 0.257,     # standardised effect
+  b_less    = -28.06     # "less engagement" effect, needed for the residual variance
+)
 
-Original effects are usually overestimates, so powering to the original effect tends to
-produce an underpowered replication. One widely used alternative is to collect 2.5 times the
-original sample, which gives 80% power to detect an effect the original study had only 33%
-power to detect (Simonsohn, 2015; Experimentology §10.4). Say which approach you used, and
-what the course's participant budget allowed.
-:::
+# Back out d_z for the paired contrast (more vs expected)
+sd_x    <- sqrt((1/3) * (2/3))                                   # SD of a balanced 3-level dummy
+sd_y    <- abs(original$b_more) * sd_x / abs(original$beta_more) # within-level SD of outcome (~32.1)
+var_exp <- var(c(0, original$b_more, original$b_less)) * (2/3)   # variance explained by condition (~352)
+sd_res  <- sqrt(sd_y^2 - var_exp)                                # residual SD (~26.1)
+original_dz <- abs(original$b_more) / (sqrt(2) * sd_res)         # ~0.47
+```
 
 ```{r}
 #| label: power
 power_rows <- map_dfr(c(0.80, 0.90, 0.95), function(pw) {
-  n <- power.prop.test(p1 = original_p_gain, p2 = original_p_loss,
-                       power = pw, sig.level = 0.05)$n
-  tibble(power = scales::percent(pw), n_per_group = ceiling(n), n_total = 2 * ceiling(n))
+  n_orig <- pwr.t.test(d = original_dz, power = pw, sig.level = 0.05,
+                       type = "paired", alternative = "two.sided")$n
+  n_half <- pwr.t.test(d = original_dz / 2, power = pw, sig.level = 0.05,
+                       type = "paired", alternative = "two.sided")$n
+  tibble(power = scales::percent(pw),
+         n_original_effect = ceiling(n_orig),
+         n_half_effect     = ceiling(n_half))
 })
 
-original_effect <- original_p_loss - original_p_gain
 two_and_half <- ceiling(2.5 * original$n)
 
-knitr::kable(power_rows, col.names = c("Power", "N per frame", "N total"),
+knitr::kable(power_rows,
+             col.names = c("Power", "N at original effect", "N at 50% of original effect"),
              caption = sprintf(
-               "Sample needed to detect the original effect (risky choice: %.0f%% gain vs %.0f%% loss, a difference of %.0f points), two-sided alpha = .05.",
-               100 * original_p_gain, 100 * original_p_loss, 100 * original_effect))
+               "Participants needed to detect the original effect (more-than-expected engagement on high-arousal positive affect: b = %.1f points, beta = %.2f, d_z = %.2f), paired design, two-sided alpha = .05.",
+               original$b_more, original$beta_more, original_dz))
 ```
 
-For comparison, 2.5 times the original sample would be `r two_and_half[1]` in the gain frame
-and `r two_and_half[2]` in the loss frame (`r sum(two_and_half)` in total).
+**I therefore chose a sample size of 142 participants to acheive 80% power with an N at 50% of the original effect.**
+
 
 ### Planned sample
 
-::: {.callout-tip icon=false}
-## Guidance
+US residents on Prolific, fluent in English, and 18 or older. Participants must also own and regularly use an Instagram account ("the main criteria for participation in the present online experiment was defined as the ownership and regular use of an Instagram account", Stsiampkouskaya et al., 2021). Collect until 142 participants pass the exclusion criteria below.
 
-Planned sample size and stopping rule, sampling frame (for example, "US residents on Prolific,
-fluent in English, 18 or older"), known demographics, and any preselection or screening. The
-stopping rule should be data-independent: "collect until N participants pass the exclusion
-criteria below" rather than "until the result is clear".
-:::
 
 ### Materials
 
-::: {.callout-tip icon=false}
-## Guidance
+**From the original article:**
 
-All materials. You can quote the original article directly: put the text in quotation marks
-and note that it was followed precisely, or quote it and point out the exceptions. Link to the
-live experiment above rather than pasting screenshots of every screen.
-:::
+All photos used in this study were acquired from the open-source photo repository Unsplash (Unsplash, n.d.). Each set of photos contained three distinct types: explorer, portrait, and scenery (Fig. 3). The portrait type showed a close-up photo of a person, the scenery type displayed a view with no people present, whilst the explorer type was a combination of both portrait and scenery types – a view with a person in a full or three-quarters height. The photos for both male and female groups were taken from the same photo shoot of the same person done by the same photographer in the same place, and therefore, have consistent aesthetics and can be perceived as taken by the same person in the same location on the same day.
+
+During the pilot version of the study, the first author had two separate in-person trials with two participants (one male and one female), asking them to comment on their perception of the experiment and its materials whilst completing it. This had been done using the screen sharing function of Zoom software (Zoom, 2020). The participants considered each set of photos as belonging to the same person, aesthetics, place, and photo shoot, and no major differences in the style and quality of the photos in each set were identified.  
+
+Additionally, for the purpose of this study it was necessary to ensure that the participants would consistently perceive the identified content types. An inter-rater reliability test was conducted in the Qualtrics software to guarantee the common acceptance and understanding of the content types by social media users. Two raters were presented with all 24 photos, and under each photo they were asked which type it relates to – portrait, scenery or explorer. The responses were analysed using Cohen’s kappa method, and the resulting level of agreement was substantial (Kappa = 0.687, z = 4.92, p < 0.001), with the overall percentage of agreement being 79.2%.
+
+**Deviations:**
+
+The article stated that all materials used are avaliable on request from the corresponding author (i.e it was not publicly accessible). In order to gather the photo set materials, I reached out to Dr. Stsiampkouskaya on 10/15/26 but have not receive a response yet. Therefore, I followed the article's guidelines on generating the photos, but due to the lack of time and budget restrictions, was unable to validate the photo set as in the original study. 
+
+
+### Materials
+
+**From the original article:**
+
+*Social media engagement conditions*
+For the purpose of this paper, social media engagement is defined as the number of likes and comments received for a post. The social media engagement conditions (i.e., more engagement than expected and less engagement than expected) represent the independent variables in the study and were coded as dummy variables, with the expected engagement condition being the reference point for more than expected and less than expected engagement conditions.
+
+*Emotions* 
+The emotionality matrix designed for this study is based on the PANAS-X scale (Watson & Clark, 1994). However, as the study only focuses on fours specific affects (i.e., high-arousal positive, low-arousal positive, high-arousal negative, and low-arousal negative affects), eight emotions were selected with each pair representing one emotional state. Initially, the scale was used as suggested by the original instruction (a 5-point Likert scale). However, based on the results of the pilot study, the Likert scale was changed to a slider with a scale from 0 to 100, in order to have more variance in responses. The scale markers were, however, left unaltered, with 0 representing ‘Very Slightly or Not at all’, 25 - ‘A Little’, 50 - ‘Moderately’, 75 - ‘Quite a bit’, and 100 – ‘Extremely’. The participants were asked to indicate to what extent they experienced the eight outlined emotions by dragging the slider to their appropriate marker.
+
+... we had four distinct indices for emotional states in the present study: positive low-arousal, positive high-arousal, negative lowarousal, and negative high-arousal, retrieved by calculating averages across four pairs of correlated emotional states respectively (i.e., calm and at ease, excited and enthusiastic, sad and upset, and angry and distressed).
+
+*Posting frequency*  
+The posting frequency measure was represented by a 7-point ordinal scale. The question asked was ‘When would you consider posting your next photo (in your main feed, not stories)?’ The response options were the following (from 1 point to 7 points): in a few months, in a month, in a fortnight, in a week, in a few days, the next day, and the same day.
+
+*Content change*  
+In order to identify content change, each photo choice was recorded with regards to the image type (portrait, scenery, and explorer). A dichotomous variable was created which indicated whether the same or a different type of content was selected after each condition in comparison to the previous content choice; a value of 0 represented no content change (e.g. the same photo type was selected) and a value of 1 represented the change of content (e.g. a different photo type was selected).
 
 ### Procedure
 
-::: {.callout-tip icon=false}
-## Guidance
+**From the original article:**
 
-As for Materials: quote the original where you can and point out the exceptions. Describe the
-sequence a participant experiences, from consent to debrief, and how long it takes.
-:::
+In order to understand the emotional impact of more than expected and less than expected engagement on social media users, and its subsequent influence on their posting frequency and content change decisions, an online experiment was designed and distributed using Qualtrics software. The experimental procedure followed the outline identified in Fig. 2.  On starting the experiment, the participants were first introduced to a participant information sheet and were required to provide their informed consent before they could proceed with the study. Those participants who did not provide their consent were automatically transferred to the ‘end-of-survey’ message.  
+
+In the introductory part of the experiment, the participants were asked to indicate the usual numbers of likes and comments they received for their Instagram posts. They were also asked how often they typically post photos on their accounts (e.g. ‘once a month’, ‘every day’, etc.). The participants also provided information about their gender, age, and country of origin in this section. On the following stages of the study, male participants were presented with the photos that have a male person in them (i.e. portrait and explorer content types). Respectively, female participants were presented with the photos that have a female person in them. Those participants who identified their gender as other were randomly allocated to either male or female group.
+
+With regards to those participants who identified their gender as other, we assumed that the gender of the person in the photos would have less bearing on their identification and reimagining process, and thus, allocated them randomly to one of the outlined gender categories (i.e., male and female).
+
+After having completed the introductory session, the participants were instructed to imagine that they had returned from a trip and decided to share an image on Instagram. Accordingly, they were presented with a choice of three photos, each following the same aesthetics but representing a different content type – portrait, explorer or scenery. Once the participants made their choice, they were taken to the expected engagement stage. The instructions on the screen notified them that their chosen photo received their usual number of likes and comments (i. e., the same number as they had indicated in the introductory section). Following this message, the participants were presented with a number of questions. Firstly, they were asked to identify their emotional state by dragging the indicator on a scale from 0 to 100 for eight distinct emotions, each pair representing a particular affect with regards to valence and arousal (e.g., calm and at ease – low-arousal positive affect). Secondly, the participants were asked when they would share their next post on Instagram (e.g., ‘In a few months’, ‘The same day’). Lastly, they were presented with a choice of photos again. As in the previous instance, the images shared the same aesthetics, but represented three different content types – portrait, explorer, and scenery (Fig. 3a–b).
+
+From this stage on, the same process repeated for more than expected and less than expected engagement conditions, but with the key difference being the number of likes and comments participants received. In the more than expected engagement condition, the participants received three times more likes and comments than their usual number (e.g. if their usual number of likes were 65, the number of likes in the more than expected engagement condition would be 195 likes). In the less than expected engagement condition, the participants received three times fewer likes and comments than their usual number (e.g., if their usual number of likes were 65, the number of likes in less than expected engagement condition would be 22 likes); in this condition, the numbers of likes and comments were also rounded to the nearest whole number for the purpose of ecological validity (e.g., one cannot have 21.67 likes on Instagram). In each of the foregoing conditions the participants followed the same procedure as in the expected engagement condition. They indicated their emotional state, posting frequency (e.g., the estimated time of their next post), and their choice of content. The study finished with the participants receiving their usual numbers of likes and comments and a ‘thank you’ message.
+
+**Deviations:**
+
+I followed the Qualtrics survey structure as closely as possible to these guidelines. However, the specific wording used to imagine the scenario where participants select images, and the wording used to indicate the number of likes and comments received, was not specified, so I wrote them myself.
+
+**Study duration:**
+
+According to the authors, "The reimbursement rate for this study was recommended by Prolific based on the defined eligibility criteria and estimated time of completion (approximately 5 min) and identified as £6.19/hr. The actual average time of completion for the participants of the study was 5.65 min.".
+
+Doing the study myself, and with non-naive pilot testers, the average time taken was ~5 minutes. 
 
 ### Analysis plan
 
-::: {.callout-tip icon=false}
-## Guidance
+**From the original article:**
 
-The analysis strategy, as close to the original as possible: data cleaning rules, exclusion
-rules, covariates, and the model or test. Original papers often do not spell this out; say
-where you had to make a choice and what you chose.
+In order to investigate direct and indirect effects of the independent variables on the dependent variables, a path analysis model was built using the Mplus software. The model has two levels, a within-individuals level, and between-individuals level, and uses a Markov chain Monte Carlo (MCMC) Bayesian estimation approach to estimate the model. Because the dependent variables were measured using nominal and ordinal scales, the second part of the model were using a probit link function, while the first part of the model were estimated using conventional least square regressions. Credible intervals and standardised beta coefficients were identified for direct effects, indirect effects, factors, and covariates. In total, we ran 51,000 MCMC iterations, at which point we reached a Potential Scale Reduction factor of less than 1.1 (Gelman & Rubin, 1992).
 
-**State the key analysis of interest explicitly.** That is the single test your replication
-stands or falls on, and it must match your preregistration. You can pre-specify additional
-analyses here too.
-:::
+Usual number of likes, usual number of comments, usual posting frequency, age, and gender were employed as factors and covariates in the model. Usual posting frequency measure was represented as 7-point ordinal scale and answered the following question: ‘How often do you normally post photos on Instagram? (in your main feed, not stories)’. The response options were the following (from 1 point to 7 points): once in a few months, once a month, once a fortnight, once a week, one photo every day, and two or more photos a day. Age, usual number of likes, and usual number of comments were recorded as continuous numeric variables. Gender was coded as 1 for male, 2 for female, 3 for other. Because only two of the respondents identified as “other” we used only those with a binary gender identification for modeling purposes.
 
-**Key analysis of interest.** The proportion of participants choosing the risky program is
-higher in the loss frame than in the gain frame, tested with a chi-square test of independence
-on the 2 × 2 table of frame by choice. The effect size is the difference in the proportion
-choosing the risky program (loss minus gain), with a 95% confidence interval.
+**Deviations**
 
-**Exclusions.** Participants are excluded if they did not complete the study, if they answered
-no speeded trial at all (every lexical-decision trial timed out, the signature of a device
-without a keyboard), or if they answered fewer than 6 of the 8 lexical-decision trials
-correctly.
+Mplus is not a free software and I do not have access to it, so I created the path analysis model using R. I used the brms package in R, as the data is a multilevel model with ordinal and binary outcomes.
+
+**Key analysis of interest:**
+The association between high arousal positive emotions and the more engagement than expected condition in the path model.
+
+**Additional analyses:**
+
+1. The association between low arousal negative emotions and the less engagement than expected condition.   
+2. A mediation of high arousal positive emotions between more engagement than expected condition and posting frequecy.   
+3. The association between content change and the more engagement than expected condition.
+
+**Exclusions:**
+1. Participants not residing in the US
+2. Participants for whom English is not their first language.
+3. Participants who are younger than 18. 
+4. Participants who do not have an Instagram account or do not regularly use Instagram
+5. Participants who did not complete the study.
+
 
 ### Differences from the original study
 
-::: {.callout-tip icon=false}
-## Guidance
-
-Every known difference in sample, setting, procedure, materials, and analysis, one per row.
-Minimizing differences is the goal, but some always remain. For each one, say whether it is
-expected to matter, based on claims in the original article or later research on when the
-effect does and does not appear. The rows below are the demo's real differences and show the
-level of detail expected; replace them with yours.
-:::
-
 | Aspect | Original study | This replication | Expected to matter? |
 |---|---|---|---|
-| Sample | University students in Stanford and British Columbia classrooms | Adults recruited on Prolific | Possibly. Framing effects have been found in both student and general samples, but their size varies across populations. |
-| Setting | Paper questionnaire in class | Online, unsupervised, on the participant's own computer | Unlikely for a single vignette, though attention may be lower online. |
-| Wording | "an unusual Asian disease" | "an unusual disease" | Unlikely. The ethnonym is incidental to the manipulation and dated. |
-| Design | Between subjects: each participant saw one frame | Between subjects, randomly assigned | No. |
-| Response | Circle a program on paper | Click a button | Unlikely. |
-| Other tasks | Problems presented alongside other questionnaire items | Followed by a short lexical-decision task used as an attention check | Unlikely: the check comes after the choice. |
+| Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demostrate that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
+| Wording | Currently unknown wording in study scenario | "Imagine you have just returned from a trip, and decide to share an image on Instagram. Of the three images below, which would you select to post?" | Not sure? Unless the vignettes are vastly different in the original study, I don't think there would be too much variation based on wording. |
 
 ### Methods addendum (post data collection)
 
@@ -810,6 +878,375 @@ if (!is.null(p2_stats)) {
 comparison_plot(Original = original,
                 `Phase 1: replication` = if (have_data) risky_counts(phase1),
                 `Phase 2: extension` = risky_counts(phase2))
+```
+
+
+### My results (currently from Pilot A data)
+
+```{r}
+#| label: path-data
+library(tidyverse)
+library(brms)
+
+data_file <- "../data/replica-proj (psych 251)_October 18, 2026_23.49.csv"   # path to the Qualtrics export
+
+# ---- 1. Read the export -------------------------------------------------------------------
+# Rows 2-3 of a Qualtrics export are question text / ImportId, so they are dropped.
+raw <- read_csv(
+  data_file,
+  col_types = cols(.default = col_character())
+) |>
+  slice(-(1:2))
+
+needed <- paste0("photo_choice", rep(1:4, each = 2), c("_w", "_m"))
+stopifnot("Missing photo-choice columns" = all(needed %in% names(raw)))
+
+# ---- 2. Label lookups and helpers ---------------------------------------------------------
+# If a real export words a label differently, recode_labels() stops and lists the unmatched
+# labels so you can add them to the lookup vectors.
+nextpost_lookup <- c(
+  "in a few months" = 1, "in a month" = 2, "in a fortnight" = 3, "in a week" = 4,
+  "in a few days" = 5, "the next day" = 6, "the same day" = 7
+)
+usual_freq_lookup <- c(
+  "once in a few months" = 1, "once a month" = 2, "once a fortnight" = 3, "once a week" = 4,
+  "once in a few days" = 5, "one photo every day" = 6, "every day" = 6,
+  "two or more photos a day" = 7, "a few times a day" = 7
+)
+recode_labels <- function(x, lookup) {
+  key <- str_squish(str_to_lower(x))
+  out <- unname(lookup[key])
+  bad <- unique(x[is.na(out) & !is.na(x)])
+  if (length(bad) > 0) {
+    stop("Unrecognised labels: ", paste(bad, collapse = "; "),
+         ". Add them to the lookup vector.", call. = FALSE)
+  }
+  out
+}
+content_type <- function(x) str_extract(str_to_lower(x), "portrait|explorer|landscape|scenery")
+z <- function(x) {                       # safe z-score: constant columns become 0, not NaN
+  s <- sd(x, na.rm = TRUE)
+  if (is.na(s) || s == 0) x - mean(x, na.rm = TRUE) else (x - mean(x, na.rm = TRUE)) / s
+}
+
+# ---- 3. One row per participant -----------------------------------------------------------
+wide <- raw |>
+  mutate(
+    id = row_number(),
+    across(c(usual_likes, usual_comments, age, starts_with("PANAS_")), as.numeric),
+    across(starts_with("nextpost_"), ~ recode_labels(.x, nextpost_lookup)),
+    ufreq = recode_labels(usual_post_freq, usual_freq_lookup),
+    # whichever photo branch the participant saw (_w = female photos, _m = male photos)
+    choice1 = coalesce(photo_choice1_w, photo_choice1_m),
+    choice2 = coalesce(photo_choice2_w, photo_choice2_m),   # after expected engagement
+    choice3 = coalesce(photo_choice3_w, photo_choice3_m),   # after more engagement
+    choice4 = coalesce(photo_choice4_w, photo_choice4_m),   # after less engagement
+    type1 = content_type(choice1), type2 = content_type(choice2),
+    type3 = content_type(choice3), type4 = content_type(choice4),
+    # content change = different photo type than the previous choice (paper, Section 3.4.4)
+    cc_expected = as.numeric(type2 != type1),
+    cc_more     = as.numeric(type3 != type2),
+    cc_less     = as.numeric(type4 != type3)
+  ) |>
+  filter(str_to_lower(gender) %in% c("female", "male")) |>   # paper drops "other" (n = 2)
+  mutate(
+    female    = as.numeric(str_to_lower(gender) == "female"),
+    ulikes    = z(usual_likes),
+    ucomments = z(usual_comments),
+    ufreq     = z(ufreq),
+    age       = z(age)
+  )
+
+# ---- 4. Long format: one row per participant per condition --------------------------------
+# Emotion composites as in the paper: calm + at ease = low-arousal positive,
+# excited + enthusiastic = high-arousal positive, sad + upset = low-arousal negative,
+# angry + distressed = high-arousal negative.
+long <- map_dfr(c("expected", "more", "less"), function(cnd) {
+  tibble(
+    id = wide$id, condition = cnd,
+    lap = rowMeans(wide[paste0("PANAS_", cnd, "_", 1:2)]),
+    hap = rowMeans(wide[paste0("PANAS_", cnd, "_", 3:4)]),
+    lan = rowMeans(wide[paste0("PANAS_", cnd, "_", 5:6)]),
+    han = rowMeans(wide[paste0("PANAS_", cnd, "_", 7:8)]),
+    pf  = wide[[paste0("nextpost_", cnd)]],
+    cc  = wide[[paste0("cc_", cnd)]]
+  )
+})
+
+dat <- long |>
+  left_join(select(wide, id, ulikes, ucomments, ufreq, female, age), by = "id") |>
+  mutate(
+    more = as.numeric(condition == "more"),     # expected engagement = reference
+    less = as.numeric(condition == "less"),
+    pf   = droplevels(factor(pf, levels = 1:7, ordered = TRUE))
+  ) |>
+  group_by(id) |>
+  mutate(across(c(hap, lap, han, lan), ~ .x - mean(.x), .names = "{.col}w")) |>  # within-person centred
+  ungroup()
+
+stopifnot(nrow(dat) == 3 * n_distinct(dat$id))
+dat |> count(condition)
+glimpse(dat)
+```
+
+```{r}
+#| label: path-model
+#| cache: true
+test_run <- n_distinct(dat$id) < 30     # tiny file: only checks that the code runs
+
+# Drop covariates with no variation (e.g. everyone is female in the test file)
+covs <- c("ulikes", "ucomments", "ufreq", "female", "age")
+covs <- covs[vapply(covs, \(v) n_distinct(dat[[v]]) > 1, logical(1))]
+beh_terms <- c("more", "less", "hapw", "lapw", "hanw", "lanw", covs, "(1 |p| id)")
+
+# Emotions are mediators (Gaussian). Posting frequency is ordinal (cumulative probit) and
+# content change is binary (probit), mirroring the probit link used in Mplus. Random
+# intercepts per participant play the role of the between-individuals level.
+f_hap <- bf(hap ~ more + less + (1 |p| id), family = gaussian())
+f_lap <- bf(lap ~ more + less + (1 |p| id), family = gaussian())
+f_han <- bf(han ~ more + less + (1 |p| id), family = gaussian())
+f_lan <- bf(lan ~ more + less + (1 |p| id), family = gaussian())
+f_pf  <- bf(reformulate(beh_terms, response = "pf"), family = cumulative("probit"))
+f_cc  <- bf(reformulate(beh_terms, response = "cc"), family = bernoulli("probit"))
+
+priors <- c(
+  prior(normal(0, 30), class = b, resp = hap),   # slider-point scale
+  prior(normal(0, 30), class = b, resp = lap),
+  prior(normal(0, 30), class = b, resp = han),
+  prior(normal(0, 30), class = b, resp = lan),
+  prior(normal(0, 1),  class = b, resp = pf),    # probit scale
+  prior(normal(0, 1),  class = b, resp = cc),
+  prior(lkj(2),        class = cor)
+)
+
+fit <- brm(
+  f_hap + f_lap + f_han + f_lan + f_pf + f_cc + set_rescor(FALSE),
+  data = dat, prior = priors,
+  chains = if (test_run) 2 else 4, cores = 4,
+  iter   = if (test_run) 600 else 4000,
+  warmup = if (test_run) 300 else 2000,
+  control = list(adapt_delta = 0.95), seed = 2026,
+  file = if (test_run) NULL else "fit_path"      # caches the fitted model to disk
+)
+
+# Convergence: Rhat should be < 1.01 (stricter than the paper's PSR < 1.1)
+max(rhat(fit), na.rm = TRUE)
+summary(fit)
+```
+
+```{r}
+#| label: path-effects
+draws <- posterior::as_draws_df(fit)
+
+# One-tailed posterior p-value, as reported by Mplus Bayes
+post_summary <- function(x) tibble(
+  estimate = median(x),
+  lower    = quantile(x, 0.025),
+  upper    = quantile(x, 0.975),
+  post_p   = min(mean(x > 0), mean(x < 0))
+)
+
+# Direct effects: engagement -> emotions, engagement -> outcomes, emotions -> outcomes
+b_cols <- grep("^b_", names(draws), value = TRUE)
+b_cols <- b_cols[!grepl("Intercept", b_cols)]
+direct <- map_dfr(b_cols, \(p) bind_cols(path = p, post_summary(draws[[p]])))
+
+knitr::kable(direct, digits = 3,
+             caption = "Direct effects (posterior median, 95% credible interval, one-tailed posterior p).")
+
+# Indirect effects: (engagement -> emotion) x (emotion -> outcome), per posterior draw
+emotions <- c(hap = "High-arousal positive", lap = "Low-arousal positive",
+              han = "High-arousal negative", lan = "Low-arousal negative")
+outcomes <- c(pf = "Posting frequency", cc = "Content change")
+
+indirect <- expand_grid(cond = c("more", "less"), med = names(emotions), out = names(outcomes)) |>
+  mutate(res = pmap(list(cond, med, out), \(cd, m, o) {
+    a <- draws[[paste0("b_", m, "_", cd)]]
+    b <- draws[[paste0("b_", o, "_", m, "w")]]
+    post_summary(a * b)
+  })) |>
+  unnest(res) |>
+  mutate(mediator = emotions[med], outcome = outcomes[out]) |>
+  select(cond, mediator, outcome, estimate, lower, upper, post_p)
+
+knitr::kable(indirect, digits = 3,
+             caption = "Indirect effects of engagement on behaviour via emotions (posterior median, 95% credible interval, one-tailed posterior p).")
+```
+
+### Model
+
+```{r}
+#| label: fig4-paths
+# Standardised coefficients for Figure 4, computed from the posterior draws of `fit`.
+dr <- as.data.frame(posterior::as_draws_df(fit))
+
+em   <- c("hap", "lap", "han", "lan")
+outs <- c("pf", "cc")
+within_preds <- c("more", "less", paste0(em, "w"))
+
+# Within-level SDs (the paper standardised at the within level)
+sd_x <- c(more = sd(dat$more), less = sd(dat$less))
+sd_e <- map_dbl(set_names(em), \(e) sd(dat[[paste0(e, "w")]]))
+
+# Probit outcomes: SD of the latent response = sqrt(variance of the within-level linear
+# predictor + 1), where 1 is the fixed probit residual variance. One value per posterior draw.
+latent_sd <- function(resp) {
+  B  <- as.matrix(dr[paste0("b_", resp, "_", within_preds)])
+  Xw <- as.matrix(dat[within_preds])
+  sqrt(apply(Xw %*% t(B), 2, var) + 1)
+}
+sd_y <- map(set_names(outs), latent_sd)
+
+# Posterior median plus significance: ** = 99% interval excludes 0, * = 95% interval excludes 0
+summ <- function(x) {
+  q <- quantile(x, c(.005, .025, .975, .995))
+  tibble(est  = median(x),
+         star = case_when(q[1] > 0 | q[4] < 0 ~ "**",
+                          q[2] > 0 | q[3] < 0 ~ "*",
+                          TRUE ~ ""))
+}
+
+# a paths: engagement -> emotion (standardised on both sides)
+a_rows <- expand_grid(cond = c("more", "less"), node = em) |>
+  mutate(type = "a",
+         res = map2(cond, node, \(cd, e) summ(dr[[paste0("b_", e, "_", cd)]] * sd_x[[cd]] / sd_e[[e]]))) |>
+  unnest(res)
+
+# b paths: mediated effect of engagement on the outcome through each emotion, (a x b) in
+# SD units of the outcome. The dummy predictor is not rescaled.
+b_rows <- expand_grid(cond = c("more", "less"), node = em, out = outs) |>
+  mutate(type = "b",
+         res = pmap(list(cond, node, out), \(cd, e, o)
+                    summ(dr[[paste0("b_", e, "_", cd)]] * dr[[paste0("b_", o, "_", e, "w")]] / sd_y[[o]]))) |>
+  unnest(res)
+
+# direct paths: engagement -> outcome (standardised on both sides)
+d_rows <- expand_grid(cond = c("more", "less"), out = outs) |>
+  mutate(type = "direct",
+         res = map2(cond, out, \(cd, o) summ(dr[[paste0("b_", o, "_", cd)]] * sd_x[[cd]] / sd_y[[o]]))) |>
+  unnest(res)
+
+paths <- bind_rows(a_rows, b_rows, d_rows)
+```
+
+```{r}
+#| label: fig4-plot
+#| fig-width: 12
+#| fig-height: 7.6
+library(tidyverse)
+
+# ---------- the original paper's values (Figure 4 / Tables 4-6), for comparison ----------
+paper_paths <- bind_rows(
+  tribble(~type, ~cond, ~node, ~est, ~star,
+    "a", "more", "hap",  0.257, "**", "a", "more", "lap", -0.139, "**",
+    "a", "more", "han", -0.048, "",   "a", "more", "lan", -0.064, "*",
+    "a", "less", "hap", -0.411, "**", "a", "less", "lap", -0.332, "**",
+    "a", "less", "han",  0.192, "**", "a", "less", "lan",  0.388, "**"),
+  tribble(~type, ~cond, ~out, ~est, ~star,
+    "direct", "more", "pf",  0.028, "",   "direct", "more", "cc", -0.212, "*",
+    "direct", "less", "pf", -0.198, "**", "direct", "less", "cc", -0.108, ""),
+  tribble(~type, ~cond, ~node, ~out, ~est, ~star,
+    "b", "more", "hap", "pf",  0.140, "*", "b", "less", "hap", "pf", -0.227, "*",
+    "b", "more", "lap", "pf",  0.022, "",  "b", "less", "lap", "pf",  0.057, "",
+    "b", "more", "han", "pf", -0.004, "",  "b", "less", "han", "pf",  0.025, "",
+    "b", "more", "lan", "pf",  0.006, "",  "b", "less", "lan", "pf", -0.055, "",
+    "b", "more", "hap", "cc",  0.043, "",  "b", "less", "hap", "cc", -0.069, "",
+    "b", "more", "lap", "cc",  0.001, "",  "b", "less", "lap", "cc",  0.003, "",
+    "b", "more", "han", "cc",  0.015, "",  "b", "less", "han", "cc", -0.070, "*",
+    "b", "more", "lan", "cc", -0.025, "",  "b", "less", "lan", "cc",  0.175, "*")
+)
+
+plot_fig4 <- function(paths, title = NULL) {
+  col_more <- "black"; col_less <- "#1F5FBF"
+  w <- 1.5; h <- 0.55
+  boxes <- tribble(
+    ~id,   ~label,                            ~x,   ~y,
+    "more","More engagement\nthan expected",   0,   6.2,
+    "less","Less engagement\nthan expected",   0,   3.8,
+    "hap", "High-arousal\npositive emotions",  6.4, 8.6,
+    "lap", "Low-arousal\npositive emotions",   6.4, 6.2,
+    "han", "High-arousal\nnegative emotions",  6.4, 3.8,
+    "lan", "Low-arousal\nnegative emotions",   6.4, 1.4,
+    "pf",  "Posting\nfrequency",               12.8, 6.2,
+    "cc",  "Content\nchange",                 12.8, 3.8
+  )
+  pos  <- function(id) boxes[boxes$id == id, ]
+  cols <- c(more = col_more, less = col_less)
+  fmt  <- function(est, star) paste0(sprintf("%.2f", est), star)
+
+  # a paths: engagement -> emotion
+  a <- paths |> filter(type == "a") |>
+    rowwise() |>
+    mutate(x0 = pos(cond)$x + w, y0 = pos(cond)$y,
+           x1 = pos(node)$x - w, y1 = pos(node)$y + ifelse(cond == "more", 0.25, -0.25),
+           tt = ifelse(cond == "more", 0.50, 0.80),
+           lx = x0 + tt * (x1 - x0), ly = y0 + tt * (y1 - y0)) |> ungroup()
+
+  # b paths: emotion -> outcome (each arrow carries a "more" and a "less" value)
+  off <- c(hap = 0.36, lap = 0.12, han = -0.12, lan = -0.36)
+  b <- paths |> filter(type == "b") |>
+    rowwise() |>
+    mutate(x0 = pos(node)$x + w, y0 = pos(node)$y,
+           x1 = pos(out)$x - w, y1 = pos(out)$y + off[[node]],
+           lx = x0 + 0.27 * (x1 - x0) + ifelse(cond == "more", -0.48, 0.48),
+           ly = y0 + 0.27 * (y1 - y0)) |> ungroup()
+  b_arrows <- b |> filter(cond == "more")
+
+  # direct paths: curved arrows (cubic Bezier curves)
+  bez <- function(p0, c1, c2, p1, n = 80) {
+    t <- seq(0, 1, length.out = n)
+    tibble(x = (1-t)^3*p0[1] + 3*(1-t)^2*t*c1[1] + 3*(1-t)*t^2*c2[1] + t^3*p1[1],
+           y = (1-t)^3*p0[2] + 3*(1-t)^2*t*c1[2] + 3*(1-t)*t^2*c2[2] + t^3*p1[2])
+  }
+  arcs <- list(
+    more_pf = bez(c(-0.3, 6.75), c(3.0, 12.8), c(9.8, 12.8), c(12.8, 6.75)),
+    more_cc = bez(c(0.5, 6.75),  c(3.5, 11.2), c(19.5, 10.5), c(14.3, 3.8)),
+    less_cc = bez(c(-0.3, 3.25), c(3.0, -2.0), c(9.8, -2.0), c(12.8, 3.25)),
+    less_pf = bez(c(0.5, 3.25),  c(3.5, -4.6), c(19.5, -2.2), c(14.3, 6.2))
+  )
+  d <- paths |> filter(type == "direct") |> mutate(key = paste(cond, out, sep = "_"))
+  arc_df  <- imap_dfr(arcs, \(df, k) mutate(df, key = k, cond = sub("_.*", "", k)))
+  arc_lab <- imap_dfr(arcs, \(df, k) df[round(nrow(df) * 0.5), ] |> mutate(key = k)) |>
+    left_join(d, by = "key")
+
+  ggplot() +
+    geom_path(data = arc_df, aes(x, y, group = key, colour = cond), linewidth = 0.5,
+              arrow = arrow(length = unit(2.5, "mm"), type = "closed")) +
+    geom_segment(data = a, aes(x = x0, y = y0, xend = x1, yend = y1, colour = cond),
+                 linewidth = 0.5, arrow = arrow(length = unit(2.5, "mm"), type = "closed")) +
+    geom_segment(data = b_arrows, aes(x = x0, y = y0, xend = x1, yend = y1),
+                 colour = "grey35", linewidth = 0.4,
+                 arrow = arrow(length = unit(2.2, "mm"), type = "closed")) +
+    geom_rect(data = boxes, aes(xmin = x - w, xmax = x + w, ymin = y - h, ymax = y + h),
+              fill = "#BFD7EE", colour = "#2C3E50", linewidth = 0.6) +
+    geom_text(data = boxes, aes(x, y, label = label), size = 3.3, lineheight = 0.95) +
+    geom_label(data = a, aes(lx, ly, label = fmt(est, star), colour = cond),
+               size = 3, fontface = "bold", fill = "white", label.padding = unit(0.12, "lines")) +
+    geom_label(data = b, aes(lx, ly, label = fmt(est, star), colour = cond),
+               size = 2.8, fill = "white", label.padding = unit(0.08, "lines")) +
+    geom_label(data = arc_lab, aes(x, y, label = fmt(est, star), colour = cond),
+               size = 3, fontface = "bold", fill = "white", label.padding = unit(0.12, "lines")) +
+    scale_colour_manual(values = cols, guide = "none") +
+    coord_cartesian(xlim = c(-2, 17.5), ylim = c(-3.2, 12), clip = "off") +
+    labs(title = title,
+         caption = paste0("Standardised coefficients. Black = more than expected engagement; blue = less than expected.\n",
+                          "Emotion-to-outcome arrows show the mediated effect of each condition (more; less).\n",
+                          "* 95% credible interval excludes 0; ** 99% credible interval excludes 0.")) +
+    theme_void(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5),
+          plot.caption = element_text(hjust = 0, size = 8.5, colour = "grey25"),
+          plot.margin = margin(8, 8, 8, 8),
+          plot.background = element_rect(fill = "white", colour = NA))
+}
+
+fig_replication <- plot_fig4(paths, "Replication")
+fig_original    <- plot_fig4(paper_paths, "Original study (Stsiampkouskaya et al., 2021)")
+
+fig_replication
+ggsave("figure4_replication.png", fig_replication, width = 12, height = 7.6, dpi = 300)
+
+# Optional side-by-side: install.packages("patchwork"), then
+# patchwork::wrap_plots(fig_original, fig_replication, ncol = 2)
 ```
 
 ## Discussion
