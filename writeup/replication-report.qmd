@@ -43,12 +43,14 @@ exclusion rule, and the key comparison.
 #| label: setup
 #| include: false
 library(tidyverse)
-library(jsonlite)
+library(rstan)
+options(mc.cores = 4)
 
-# Must match EXPERIMENT.id in experiment.js, and the --experiment you passed to the export.
-# Phase 2 runs under its own id, so its data never mix with Phase 1's.
-experiment_id        <- "framing-demo"
-experiment_id_phase2 <- "framing-demo-phase2"
+# The Qualtrics export each phase is analysed from. Phase 1 points at the current data: Pilot B
+# for now, the full sample once it is collected. Leave phase2_file as NULL until Phase 2 runs.
+# A NULL or missing file makes that phase's sections skip themselves.
+phase1_file <- "../data/replica-proj (psych 251)_October 27, 2026_17.03.csv"
+phase2_file <- NULL
 ```
 
 ```{r}
@@ -112,9 +114,10 @@ column: say what you verified yourself, not that the output "looked right". If y
 tools, replace the table with a sentence saying so.
 :::
 
-- I did not use any AI tools during the proposal stage of this project. 
-- I used Claude to assist me with the power analysis calculation in the Methods section, and to generate the code to run the path analysis model in R in the Results section, during the Pilot A stage. 
-- I used Claude to refactor the Pilot A data analysis code into functions, add the Pilot B data analysis code, and explain the difference between the Mplus and R models, during the Pilot B stage.
+- Proposal stage: I did not use any AI tools during this stage. 
+- Pilot A stage: I used Claude to assist me with the power analysis calculation in the Methods section, and to generate the code to run the path analysis model in R in the Results section. 
+- Pilot B stage: I used Claude to refactor the Pilot A data analysis code into functions, add the Pilot B data analysis code, and explain the difference between the Mplus and R models.
+- Pre-registration stage: I used Claude to rewrite the data analysis code from using brms to rstan (following TA feedback), explain the differences in this model compared to the Mplus model, and restructure the report to follow the template's results section setup.
 
 I wrote all of the text in this report myself. AI tools were not used to write, rewrite or paraphrase it, and were not used to generate, alter, or impute any participant data. I take full responsibility for the content of this report, including any errors introduced by AI tools.
 
@@ -133,313 +136,8 @@ adapt its code and say so in the caption.
 
 
 ```{r}
-#| label: original-study-demo
-#| include: false
-# The original study's numbers, entered once and used by the power analysis, the Key
-# statistics table, and the side-by-side figures. Replace these with your original study's
-# values, and say in a comment exactly where in the paper each one comes from.
-#
-# Tversky & Kahneman (1981), Problem 1 (gain frame, N = 152): 72% chose the certain program,
-# 28% the risky one. Problem 2 (loss frame, N = 155): 22% certain, 78% risky. The paper
-# reports percentages, so the counts below are reconstructed from them.
-original <- tibble(
-  condition = c("gain", "loss"),
-  n         = c(152, 155),
-  risky     = round(c(0.28 * 152, 0.78 * 155))
-)
-original_p_gain <- original$risky[original$condition == "gain"] / original$n[original$condition == "gain"]
-original_p_loss <- original$risky[original$condition == "loss"] / original$n[original$condition == "loss"]
-```
-```{r}
 #| label: analysis-functions
 #| code-summary: "Show the analysis code (shared by Phase 1 and Phase 2)"
-
-# Load one phase's exported data and apply the exclusion rule. Returns NULL if that phase
-# has not been exported yet, which is how every section below knows to skip itself.
-read_phase <- function(id) {
-  dir <- file.path("..", "data", "raw", id)
-  if (!all(file.exists(file.path(dir, c("participants.csv", "trials.csv"))))) return(NULL)
-  participants <- read_csv(file.path(dir, "participants.csv"), show_col_types = FALSE)
-  trials       <- read_csv(file.path(dir, "trials.csv"), show_col_types = FALSE)
-  errors_path  <- file.path(dir, "errors.csv")
-  errors <- if (file.exists(errors_path)) read_csv(errors_path, show_col_types = FALSE) else tibble()
-
-  complete <- participants |> filter(completed)
-
-  # Exclusion rule: replace with the rule you preregistered. Here: at least 6 of 8
-  # lexical-decision trials correct, and at least one speeded response at all (a session in
-  # which every speeded trial timed out is what a device without a keyboard produces).
-  ld <- trials |>
-    filter(task == "lexical_decision") |>
-    group_by(participant_id) |>
-    summarise(ld_acc           = mean(as.logical(correct), na.rm = TRUE),
-              ld_all_timed_out = all(as.logical(timed_out)),
-              .groups = "drop")
-  checked <- complete |> left_join(ld, by = "participant_id")
-  keep <- checked |> filter(!is.na(ld_acc), !ld_all_timed_out, ld_acc >= 0.75)
-
-  list(participants = participants, trials = trials, errors = errors,
-       complete = complete, keep = keep,
-       n_no_response = sum(checked$ld_all_timed_out %in% TRUE))
-}
-
-# The key comparison's raw counts: how many analysed participants chose the risky program
-# in each frame.
-risky_counts <- function(d) {
-  d$trials |>
-    filter(task == "framing", participant_id %in% d$keep$participant_id) |>
-    group_by(condition) |>
-    summarise(risky = sum(choice == "risky"), n = n(), .groups = "drop")
-}
-
-# The key statistic: difference in the proportion choosing the risky program (loss minus
-# gain) with a 95% CI, and the uncorrected chi-square, which is the same test. NULL until
-# both frames have at least one analysed participant.
-diff_ci <- function(counts) {
-  loss <- counts[counts$condition == "loss", ]
-  gain <- counts[counts$condition == "gain", ]
-  if (nrow(loss) == 0 || nrow(gain) == 0) return(NULL)
-  pt <- prop.test(c(loss$risky, gain$risky), c(loss$n, gain$n), correct = FALSE)
-  tibble(N = loss$n + gain$n,
-         estimate = unname(pt$estimate[1] - pt$estimate[2]),
-         ci_low = pt$conf.int[1], ci_high = pt$conf.int[2],
-         statistic = unname(pt$statistic), p = pt$p.value)
-}
-
-# Side-by-side figure: any number of studies on the same axes, in the order given.
-prop_ci <- function(x, n) {
-  ci <- prop.test(x, n, correct = FALSE)$conf.int
-  tibble(p = x / n, low = ci[1], high = ci[2])
-}
-comparison_plot <- function(...) {
-  studies <- list(...)
-  studies <- studies[!map_lgl(studies, ~ is.null(.x) || nrow(.x) == 0)]
-  df <- imap_dfr(studies, ~ mutate(.x, Study = .y)) |>
-    rowwise() |> mutate(prop_ci(risky, n)) |> ungroup() |>
-    mutate(Study = factor(Study, levels = names(studies)), label = sprintf("n = %d", n))
-  fills <- setNames(c("grey55", "#1E6E76", "#B8792A")[seq_along(studies)], names(studies))
-  dodge <- position_dodge(width = 0.8)
-  ggplot(df, aes(x = condition, y = p, fill = Study)) +
-    geom_col(position = dodge, width = 0.75) +
-    geom_errorbar(aes(ymin = low, ymax = high), position = dodge, width = 0.2) +
-    geom_text(aes(y = 0.02, label = label), position = dodge, vjust = 0, size = 3, colour = "white") +
-    scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
-    scale_fill_manual(values = fills) +
-    labs(x = "Frame", y = "Chose the risky program", fill = NULL) +
-    theme_minimal(base_size = 12) +
-    theme(legend.position = "top")
-}
-
-phase1 <- read_phase(experiment_id)
-phase2 <- read_phase(experiment_id_phase2)
-have_data   <- !is.null(phase1)
-have_phase2 <- !is.null(phase2)
-```
-
-```{r}
-#| label: key-stats
-#| echo: false
-fmt_row <- function(study, r) {
-  if (is.null(r)) {
-    return(tibble(Study = study, N = "", `Effect (loss − gain)` = "not yet collected",
-                  `95% CI` = "", `χ²(1)` = "", p = ""))
-  }
-  tibble(Study = study, N = as.character(r$N),
-         `Effect (loss − gain)` = sprintf("%.0f points", 100 * r$estimate),
-         `95% CI` = sprintf("[%.0f, %.0f]", 100 * r$ci_low, 100 * r$ci_high),
-         `χ²(1)` = sprintf("%.2f", r$statistic),
-         p = format.pval(r$p, digits = 2, eps = 0.001))
-}
-bind_rows(
-  fmt_row("Original", diff_ci(original)),
-  fmt_row("Phase 1: replication", if (have_data) diff_ci(risky_counts(phase1))),
-  fmt_row("Phase 2: extension", if (have_phase2) diff_ci(risky_counts(phase2)))
-) |>
-  knitr::kable(align = "lrlllr",
-               caption = "Key comparison: difference in the percentage of analysed participants choosing the risky program, loss frame minus gain frame.")
-```
-
-# Phase 1: Replication
-
-## Introduction
-
-I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I was interested in investigating the emotions people want to feel and actually feel online. This project assisted in my goals of understanding the research process for studies in this field, and improved my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In the original study, the researchers found that:  
-  
-  1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
-  2. Posting frequecy was increased if users felt more excitement after receiving more engagement than expected.   
-  3. The content of their posts were also more likely to be of the same type if they received more engagement than expected.   
-  
-I wanted to replicate these three main findings in my project.   
-  
-The main experimental conditions in this study were whether a participant saw expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I used the same stimuli, e.g photos and scenario wording, as the original authors. The measures included 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I preregistered was a path analysis model with two levels (a within-individuals level and between-individuals level) that used a MCMC Bayesian estimation approach.   
-  
-One of the main challenges I predicted before starting the replication project was that I would not find the same results due to a difference in sample population. The original sample consisted of participants from the UK, whereas our sample consisted of participants from the US. As prior research indicated that there may be cross-national differences in the emotional content people spread online, there was a possibility that the sample difference may contribute to different results. 
-  
-A possible extension to this project would be to explore whether these effects still hold in contexts with very different cultural defaults, e.g East Asian contexts. I could also potentially look at negative comments or dislikes as a form of engagement, and explore how that shapes people's emotional responses to their posts.  
-
-## Methods
-
-### Power analysis
-
-```{r}
-#| label: original-values
-library(tidyverse)
-library(pwr)
-
-# Original study values (Stsiampkouskaya et al., 2021, Tables 3-4):
-# more-than-expected engagement -> high-arousal positive affect
-original <- list(
-  n         = 248,       # participants (each saw all three conditions)
-  b_more    = 17.521,    # unstandardised effect, 0-100 slider points
-  beta_more = 0.257,     # standardised effect
-  b_less    = -28.06     # "less engagement" effect, needed for the residual variance
-)
-
-# Back out d_z for the paired contrast (more vs expected)
-sd_x    <- sqrt((1/3) * (2/3))                                   # SD of a balanced 3-level dummy
-sd_y    <- abs(original$b_more) * sd_x / abs(original$beta_more) # within-level SD of outcome (~32.1)
-var_exp <- var(c(0, original$b_more, original$b_less)) * (2/3)   # variance explained by condition (~352)
-sd_res  <- sqrt(sd_y^2 - var_exp)                                # residual SD (~26.1)
-original_dz <- abs(original$b_more) / (sqrt(2) * sd_res)         # ~0.47
-```
-
-```{r}
-#| label: power
-power_rows <- map_dfr(c(0.80, 0.90, 0.95), function(pw) {
-  n_orig <- pwr.t.test(d = original_dz, power = pw, sig.level = 0.05,
-                       type = "paired", alternative = "two.sided")$n
-  n_half <- pwr.t.test(d = original_dz / 2, power = pw, sig.level = 0.05,
-                       type = "paired", alternative = "two.sided")$n
-  tibble(power = scales::percent(pw),
-         n_original_effect = ceiling(n_orig),
-         n_half_effect     = ceiling(n_half))
-})
-
-two_and_half <- ceiling(2.5 * original$n)
-
-knitr::kable(power_rows,
-             col.names = c("Power", "N at original effect", "N at 50% of original effect"),
-             caption = sprintf(
-               "Participants needed to detect the original effect (more-than-expected engagement on high-arousal positive affect: b = %.1f points, beta = %.2f, d_z = %.2f), paired design, two-sided alpha = .05.",
-               original$b_more, original$beta_more, original_dz))
-```
-
-**I therefore chose a sample size of 142 participants to acheive 80% power with an N at 50% of the original effect.**
-
-
-### Planned sample
-
-US residents on Prolific, fluent in English, and 18 or older. Participants must also own and regularly use an Instagram account ("the main criteria for participation in the present online experiment was defined as the ownership and regular use of an Instagram account", Stsiampkouskaya et al., 2021). Collect until 142 participants pass the exclusion criteria below.
-
-
-### Materials
-
-**From the original article:**
-
-All photos used in this study were acquired from the open-source photo repository Unsplash (Unsplash, n.d.). Each set of photos contained three distinct types: explorer, portrait, and scenery (Fig. 3). The portrait type showed a close-up photo of a person, the scenery type displayed a view with no people present, whilst the explorer type was a combination of both portrait and scenery types – a view with a person in a full or three-quarters height. The photos for both male and female groups were taken from the same photo shoot of the same person done by the same photographer in the same place, and therefore, have consistent aesthetics and can be perceived as taken by the same person in the same location on the same day.
-
-During the pilot version of the study, the first author had two separate in-person trials with two participants (one male and one female), asking them to comment on their perception of the experiment and its materials whilst completing it. This had been done using the screen sharing function of Zoom software (Zoom, 2020). The participants considered each set of photos as belonging to the same person, aesthetics, place, and photo shoot, and no major differences in the style and quality of the photos in each set were identified.  
-
-Additionally, for the purpose of this study it was necessary to ensure that the participants would consistently perceive the identified content types. An inter-rater reliability test was conducted in the Qualtrics software to guarantee the common acceptance and understanding of the content types by social media users. Two raters were presented with all 24 photos, and under each photo they were asked which type it relates to – portrait, scenery or explorer. The responses were analysed using Cohen’s kappa method, and the resulting level of agreement was substantial (Kappa = 0.687, z = 4.92, p < 0.001), with the overall percentage of agreement being 79.2%.
-
-**Deviations:**
-
-The article stated that all materials used are avaliable on request from the corresponding author (i.e it was not publicly accessible). In order to gather the photo set materials, I reached out to Dr. Stsiampkouskaya on 10/15/26 but have not received a response yet. Therefore, I followed the article's guidelines on generating the photos, but due to the lack of time and budget restrictions, was unable to validate the photo set as in the original study. 
-
-
-### Measures
-
-**From the original article:**
-
-*Social media engagement conditions*
-For the purpose of this paper, social media engagement is defined as the number of likes and comments received for a post. The social media engagement conditions (i.e., more engagement than expected and less engagement than expected) represent the independent variables in the study and were coded as dummy variables, with the expected engagement condition being the reference point for more than expected and less than expected engagement conditions.
-
-*Emotions* 
-The emotionality matrix designed for this study is based on the PANAS-X scale (Watson & Clark, 1994). However, as the study only focuses on fours specific affects (i.e., high-arousal positive, low-arousal positive, high-arousal negative, and low-arousal negative affects), eight emotions were selected with each pair representing one emotional state. Initially, the scale was used as suggested by the original instruction (a 5-point Likert scale). However, based on the results of the pilot study, the Likert scale was changed to a slider with a scale from 0 to 100, in order to have more variance in responses. The scale markers were, however, left unaltered, with 0 representing ‘Very Slightly or Not at all’, 25 - ‘A Little’, 50 - ‘Moderately’, 75 - ‘Quite a bit’, and 100 – ‘Extremely’. The participants were asked to indicate to what extent they experienced the eight outlined emotions by dragging the slider to their appropriate marker.
-
-... we had four distinct indices for emotional states in the present study: positive low-arousal, positive high-arousal, negative lowarousal, and negative high-arousal, retrieved by calculating averages across four pairs of correlated emotional states respectively (i.e., calm and at ease, excited and enthusiastic, sad and upset, and angry and distressed).
-
-*Posting frequency*  
-The posting frequency measure was represented by a 7-point ordinal scale. The question asked was ‘When would you consider posting your next photo (in your main feed, not stories)?’ The response options were the following (from 1 point to 7 points): in a few months, in a month, in a fortnight, in a week, in a few days, the next day, and the same day.
-
-*Content change*  
-In order to identify content change, each photo choice was recorded with regards to the image type (portrait, scenery, and explorer). A dichotomous variable was created which indicated whether the same or a different type of content was selected after each condition in comparison to the previous content choice; a value of 0 represented no content change (e.g. the same photo type was selected) and a value of 1 represented the change of content (e.g. a different photo type was selected).
-
-### Procedure
-
-**From the original article:**
-
-In order to understand the emotional impact of more than expected and less than expected engagement on social media users, and its subsequent influence on their posting frequency and content change decisions, an online experiment was designed and distributed using Qualtrics software. The experimental procedure followed the outline identified in Fig. 2.  On starting the experiment, the participants were first introduced to a participant information sheet and were required to provide their informed consent before they could proceed with the study. Those participants who did not provide their consent were automatically transferred to the ‘end-of-survey’ message.  
-
-In the introductory part of the experiment, the participants were asked to indicate the usual numbers of likes and comments they received for their Instagram posts. They were also asked how often they typically post photos on their accounts (e.g. ‘once a month’, ‘every day’, etc.). The participants also provided information about their gender, age, and country of origin in this section. On the following stages of the study, male participants were presented with the photos that have a male person in them (i.e. portrait and explorer content types). Respectively, female participants were presented with the photos that have a female person in them. Those participants who identified their gender as other were randomly allocated to either male or female group.
-
-With regards to those participants who identified their gender as other, we assumed that the gender of the person in the photos would have less bearing on their identification and reimagining process, and thus, allocated them randomly to one of the outlined gender categories (i.e., male and female).
-
-After having completed the introductory session, the participants were instructed to imagine that they had returned from a trip and decided to share an image on Instagram. Accordingly, they were presented with a choice of three photos, each following the same aesthetics but representing a different content type – portrait, explorer or scenery. Once the participants made their choice, they were taken to the expected engagement stage. The instructions on the screen notified them that their chosen photo received their usual number of likes and comments (i. e., the same number as they had indicated in the introductory section). Following this message, the participants were presented with a number of questions. Firstly, they were asked to identify their emotional state by dragging the indicator on a scale from 0 to 100 for eight distinct emotions, each pair representing a particular affect with regards to valence and arousal (e.g., calm and at ease – low-arousal positive affect). Secondly, the participants were asked when they would share their next post on Instagram (e.g., ‘In a few months’, ‘The same day’). Lastly, they were presented with a choice of photos again. As in the previous instance, the images shared the same aesthetics, but represented three different content types – portrait, explorer, and scenery (Fig. 3a–b).
-
-From this stage on, the same process repeated for more than expected and less than expected engagement conditions, but with the key difference being the number of likes and comments participants received. In the more than expected engagement condition, the participants received three times more likes and comments than their usual number (e.g. if their usual number of likes were 65, the number of likes in the more than expected engagement condition would be 195 likes). In the less than expected engagement condition, the participants received three times fewer likes and comments than their usual number (e.g., if their usual number of likes were 65, the number of likes in less than expected engagement condition would be 22 likes); in this condition, the numbers of likes and comments were also rounded to the nearest whole number for the purpose of ecological validity (e.g., one cannot have 21.67 likes on Instagram). In each of the foregoing conditions the participants followed the same procedure as in the expected engagement condition. They indicated their emotional state, posting frequency (e.g., the estimated time of their next post), and their choice of content. The study finished with the participants receiving their usual numbers of likes and comments and a ‘thank you’ message.
-
-**Deviations:**
-
-I followed the Qualtrics survey structure as closely as possible to these guidelines. However, the specific wording used to imagine the scenario where participants select images, and the wording used to indicate the number of likes and comments received, was not specified, so I wrote them myself.
-
-**Study duration:**
-
-According to the authors, "The reimbursement rate for this study was recommended by Prolific based on the defined eligibility criteria and estimated time of completion (approximately 5 min) and identified as £6.19/hr. The actual average time of completion for the participants of the study was 5.65 min."
-
-Doing the study myself, and with non-naive pilot testers, the average time taken was ~5 minutes. 
-
-### Analysis plan
-
-**From the original article:**
-
-In order to investigate direct and indirect effects of the independent variables on the dependent variables, a path analysis model was built using the Mplus software. The model has two levels, a within-individuals level, and between-individuals level, and uses a Markov chain Monte Carlo (MCMC) Bayesian estimation approach to estimate the model. Because the dependent variables were measured using nominal and ordinal scales, the second part of the model were using a probit link function, while the first part of the model were estimated using conventional least square regressions. Credible intervals and standardised beta coefficients were identified for direct effects, indirect effects, factors, and covariates. In total, we ran 51,000 MCMC iterations, at which point we reached a Potential Scale Reduction factor of less than 1.1 (Gelman & Rubin, 1992).
-
-Usual number of likes, usual number of comments, usual posting frequency, age, and gender were employed as factors and covariates in the model. Usual posting frequency measure was represented as 7-point ordinal scale and answered the following question: ‘How often do you normally post photos on Instagram? (in your main feed, not stories)’. The response options were the following (from 1 point to 7 points): once in a few months, once a month, once a fortnight, once a week, one photo every day, and two or more photos a day. Age, usual number of likes, and usual number of comments were recorded as continuous numeric variables. Gender was coded as 1 for male, 2 for female, 3 for other. Because only two of the respondents identified as “other” we used only those with a binary gender identification for modeling purposes.
-
-**Deviations**
-
-Mplus is not a free software and I do not have access to it, so I created the path analysis model using R. I used the brms package in R, as the data is a multilevel model with ordinal and binary outcomes.
-
-**Key analysis of interest:**
-The association between high arousal positive emotions and the more engagement than expected condition in the path model.
-
-**Additional analyses:**
-
-1. The association between low arousal negative emotions and the less engagement than expected condition.   
-2. A mediation of high arousal positive emotions between more engagement than expected condition and posting frequecy.   
-3. The association between content change and the more engagement than expected condition.
-
-**Exclusions:**
-
-1. Participants not residing in the US
-2. Participants for whom English is not their first language.
-3. Participants who are younger than 18. 
-4. Participants who do not have an Instagram account or do not regularly use Instagram
-5. Participants who did not complete the study.
-
-
-### Differences from the original study
-
-| Aspect | Original study | This replication | Expected to matter? |
-|---|---|---|---|
-| Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demostrate that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
-| Wording | Currently unknown wording in study scenario | "Imagine you have just returned from a trip, and decide to share an image on Instagram. Of the three images below, which would you select to post?" | Not sure? Unless the vignettes are vastly different in the original study, I don't think there would be too much variation based on wording. |
-| Data analysis language | MPlus | R, using the brms package | Not sure? See below for differences after Claude created the path analysis model code in R.  |
-
-Differences between the MPlus and R models
-
-Mplus uses latent mean centering to split variance into within- and between- clusters. The brms R model uses person-mean centering instead, where each participant's mean value on each of the emotion composits (hap, lap, han, lan) is subtracted from their own repeated observations. The original paper also doesn't have within-level covariates with within-person variance (they have person-level traits measured once). In the R model, we therefore include them as person-level predictors. For posting frequency and content change, the original paper reports Mplus standardised coefficients, while the R model reports unstandardised direct and indirect effects (in probit units per slider point).
-
-
-## Results
-
-### Pilot A Data
-
-```{r}
-#| label: pilot-functions
-library(tidyverse)
-library(brms)
 
 # ---- Label lookups and helpers ------------------------------------------------------------
 # If there are different labels, recode_labels() stops and lists the unmatched
@@ -477,11 +175,28 @@ em   <- names(emotions)
 outs <- names(outcomes)
 
 # ---- Read a Qualtrics export into one row per participant per condition --------------------
-read_pilot <- function(data_file) {
+# Returns NULL if that phase has no data yet, which is how every section below knows to skip
+# itself. Exclusions: anyone who did not consent, did not finish, or did not answer "Yes" to
+# owning and regularly using an Instagram account (a blank counts as not "Yes"); then, as in
+# the paper, anyone whose gender is not female or male. The counts at each step are attached
+# as attr(dat, "exclusions"), and one row per analysed participant (raw age and gender) as
+# attr(dat, "participants").
+read_phase <- function(data_file) {
+  if (is.null(data_file) || !file.exists(data_file)) return(NULL)
   # Rows 2-3 of a Qualtrics export are question text / ImportId, so they are dropped.
   raw <- read_csv(data_file, col_types = cols(.default = col_character()),
                   name_repair = "unique_quiet") |>
     slice(-(1:2))
+
+  keep <- tibble(
+    consented   = str_starts(coalesce(raw$consent, ""), "I agree"),
+    finished    = str_to_lower(coalesce(raw$Finished, "")) == "true",
+    own_account = str_to_lower(str_squish(coalesce(raw$own_account, ""))) == "yes"
+  )
+  n_steps <- c(nrow(raw), sum(keep$consented),
+               sum(keep$consented & keep$finished),
+               sum(keep$consented & keep$finished & keep$own_account))
+  raw <- raw[keep$consented & keep$finished & keep$own_account, ]
 
   needed <- paste0("photo_choice", rep(1:4, each = 2), c("_w", "_m"))
   stopifnot("Missing photo-choice columns" = all(needed %in% names(raw)))
@@ -491,6 +206,7 @@ read_pilot <- function(data_file) {
     mutate(
       id = row_number(),
       across(c(usual_likes, usual_comments, age, starts_with("PANAS_")), as.numeric),
+      age_years = age,
       across(starts_with("nextpost_"), ~ recode_labels(.x, nextpost_lookup)),
       ufreq = recode_labels(usual_post_freq, usual_freq_lookup),
       # whichever photo branch the participant saw (_w = female photos, _m = male photos).
@@ -529,50 +245,82 @@ read_pilot <- function(data_file) {
       more = as.numeric(condition == "more"),     # expected engagement = reference
       less = as.numeric(condition == "less"),
       pf   = droplevels(factor(pf, levels = 1:7, ordered = TRUE))
-    ) |>
-    group_by(id) |>
-    mutate(across(all_of(em), ~ .x - mean(.x), .names = "{.col}w")) |>  # within-person centred
-    ungroup()
+    )
 
   stopifnot(nrow(dat) == 3 * n_distinct(dat$id))
+  attr(dat, "exclusions") <- tibble(
+    Step = c("Responses", "Consented", "Finished", "Owns and uses an Instagram account",
+             "Gender female or male (analysed)"),
+    n    = c(n_steps, nrow(wide))
+  )
+  attr(dat, "participants") <- select(wide, id, age = age_years, gender)
   dat
 }
 
 # ---- Fit the path model ------------------------------------------------------------------
-# Emotions are mediators (Gaussian). Posting frequency is ordinal (cumulative probit) and
-# content change is binary (probit), mirroring the probit link used in Mplus. Random
-# intercepts per participant play the role of the between-individuals level.
-fit_path_model <- function(dat, file) {
+# The model itself is written in Stan, in the `path-stan` chunk below. This function turns
+# `dat` into the numbers Stan needs, runs the sampler, and renames the parameters so that
+# b_<outcome>_<predictor> reads like the paper's paths (e.g. b_hap_more, b_pf_hapw).
+fit_path_model <- function(dat) {
   test_run <- n_distinct(dat$id) < 30     # tiny file: only checks that the code runs
 
   # Drop covariates with no variation (e.g. everyone is female in the test file)
   covs <- c("ulikes", "ucomments", "ufreq", "female", "age")
   covs <- covs[vapply(covs, \(v) n_distinct(dat[[v]]) > 1, logical(1))]
-  beh_terms <- c("more", "less", paste0(em, "w"), covs, "(1 |p| id)")
 
-  f_em  <- map(em, \(e) bf(reformulate(c("more", "less", "(1 |p| id)"), response = e),
-                           family = gaussian()))
-  f_pf  <- bf(reformulate(beh_terms, response = "pf"), family = cumulative("probit"))
-  f_cc  <- bf(reformulate(beh_terms, response = "cc"), family = bernoulli("probit"))
+  person <- match(dat$id, sort(unique(dat$id)))
+  # Condition dummies centred within person, so each emotion's person-level intercept is that
+  # person's (latent) mean across the three conditions
+  D <- dat |>
+    group_by(id) |>
+    mutate(across(c(more, less), ~ .x - mean(.x))) |>
+    ungroup() |>
+    select(more, less) |>
+    as.matrix()
+  X <- dat |>
+    mutate(person = person) |>
+    distinct(person, across(all_of(covs))) |>
+    arrange(person) |>
+    select(all_of(covs)) |>
+    as.matrix()
+  stopifnot("Missing values in the model data" = !anyNA(cbind(D, dat[c(em, "pf", "cc")])) && !anyNA(X))
 
-  priors <- c(
-    set_prior("normal(0, 30)", class = "b", resp = em),   # slider-point scale
-    prior(normal(0, 1),  class = b, resp = pf),    # probit scale
-    prior(normal(0, 1),  class = b, resp = cc),
-    prior(lkj(2),        class = cor)
+  stan_data <- list(
+    N = nrow(dat), J = max(person), id = person,
+    D = D, E = as.matrix(dat[em]),
+    K = nlevels(dat$pf), pf = as.integer(dat$pf), cc = as.integer(dat$cc),
+    P = length(covs), X = X,
+    Sigma_D = cov(D)
   )
 
-  brm(
-    reduce(f_em, `+`) + f_pf + f_cc + set_rescor(FALSE),
-    data = dat, prior = priors,
-    chains = if (test_run) 2 else 4, cores = 4,
+  fit <- sampling(
+    path_stan, data = stan_data,
+    chains = if (test_run) 2 else 4,
     iter   = if (test_run) 600 else 4000,
     warmup = if (test_run) 300 else 2000,
     control = list(adapt_delta = 0.95), seed = 2026,
-    init = 0,                                     # random inits fail to start on small pilots
-    file = if (test_run) NULL else file,          # caches the fitted model to disk
-    file_refit = "on_change"                      # ...but refits if the data or model change
+    init = 0                                      # random inits fail to start on small pilots
   )
+
+  # Stan's matrix names -> path names
+  cond_names <- c("more", "less")
+  rename_map <- c(
+    set_names(outer(seq_along(em), 1:2, \(k, c) sprintf("A[%d,%d]", k, c)),
+              outer(em, cond_names, \(e, c) paste0("b_", e, "_", c))),
+    set_names(outer(1:2, 1:2, \(o, c) sprintf("C[%d,%d]", o, c)),
+              outer(outs, cond_names, \(o, c) paste0("b_", o, "_", c))),
+    set_names(outer(1:2, seq_along(em), \(o, k) sprintf("B[%d,%d]", o, k)),
+              outer(outs, em, \(o, e) paste0("b_", o, "_", e, "w"))),
+    if (length(covs) > 0)
+      set_names(outer(1:2, seq_along(covs), \(o, p) sprintf("G[%d,%d]", o, p)),
+                outer(outs, covs, \(o, v) paste0("b_", o, "_", v))),
+    set_names(sprintf("sd_e[%d]", seq_along(em)), paste0("sdw_", em)),
+    set_names(sprintf("sd_y[%d]", 1:2), paste0("sdw_", outs))
+  )
+  draws <- as.data.frame(as.matrix(fit))[rename_map] |>
+    set_names(names(rename_map))
+
+  list(stanfit = fit, draws = draws)
 }
 
 # ---- Direct and indirect effects ---------------------------------------------------------
@@ -584,12 +332,12 @@ post_summary <- function(x) tibble(
   post_p   = min(mean(x > 0), mean(x < 0))
 )
 
-effect_tables <- function(fit) {
-  draws <- posterior::as_draws_df(fit)
+effect_tables <- function(model) {
+  draws <- model$draws
 
-  # Direct effects: engagement -> emotions, engagement -> outcomes, emotions -> outcomes
+  # Direct effects: engagement -> emotions, engagement -> outcomes, emotions -> outcomes,
+  # covariates -> outcomes
   b_cols <- grep("^b_", names(draws), value = TRUE)
-  b_cols <- b_cols[!grepl("Intercept", b_cols)]
   direct <- map_dfr(b_cols, \(p) bind_cols(path = p, post_summary(draws[[p]])))
 
   # Indirect effects: (engagement -> emotion) x (emotion -> outcome), per posterior draw
@@ -612,30 +360,27 @@ effect_tables <- function(fit) {
 }
 
 # ---- Standardised coefficients for Figure 4 ----------------------------------------------
-fig4_paths <- function(fit, dat) {
-  dr <- as.data.frame(posterior::as_draws_df(fit))
-  within_preds <- c("more", "less", paste0(em, "w"))
+fig4_paths <- function(model, dat) {
+  dr <- model$draws
 
-  # Within-level SDs (the paper standardised at the within level)
+  # Within-level SDs (the paper standardised at the within level). The emotion and outcome SDs
+  # are model-implied and computed in Stan, one value per posterior draw; for the probit
+  # outcomes this is the SD of the latent response, whose residual variance is fixed at 1.
   sd_x <- c(more = sd(dat$more), less = sd(dat$less))
-  sd_e <- map_dbl(set_names(em), \(e) sd(dat[[paste0(e, "w")]]))
+  sd_e <- map(set_names(em), \(e) dr[[paste0("sdw_", e)]])
+  sd_y <- map(set_names(outs), \(o) dr[[paste0("sdw_", o)]])
 
-  # Probit outcomes: SD of the latent response = sqrt(variance of the within-level linear
-  # predictor + 1), where 1 is the fixed probit residual variance. One value per posterior draw.
-  latent_sd <- function(resp) {
-    B  <- as.matrix(dr[paste0("b_", resp, "_", within_preds)])
-    Xw <- as.matrix(dat[within_preds])
-    sqrt(apply(Xw %*% t(B), 2, var) + 1)
-  }
-  sd_y <- map(set_names(outs), latent_sd)
-
-  # Posterior median plus significance: ** = 99% interval excludes 0, * = 95% interval excludes 0
+  # Posterior median, 95% credible interval, one-tailed posterior p, and significance:
+  # ** = 99% interval excludes 0, * = 95% interval excludes 0
   summ <- function(x) {
     q <- quantile(x, c(.005, .025, .975, .995))
-    tibble(est  = median(x),
-           star = case_when(q[1] > 0 | q[4] < 0 ~ "**",
-                            q[2] > 0 | q[3] < 0 ~ "*",
-                            TRUE ~ ""))
+    tibble(est    = median(x),
+           lower  = q[[2]],
+           upper  = q[[3]],
+           post_p = min(mean(x > 0), mean(x < 0)),
+           star   = case_when(q[1] > 0 | q[4] < 0 ~ "**",
+                              q[2] > 0 | q[3] < 0 ~ "*",
+                              TRUE ~ ""))
   }
   coef <- function(resp, pred) dr[[paste0("b_", resp, "_", pred)]]
 
@@ -760,81 +505,378 @@ plot_fig4 <- function(paths, title = NULL) {
           plot.background = element_rect(fill = "white", colour = NA))
 }
 
+# ---- Preregistered analyses, original vs replication ------------------------------------
+# The key analysis and the three additional analyses from the analysis plan, as standardised
+# paths (the b row is the mediated effect, a x b, in SD units of posting frequency).
+planned <- tribble(
+  ~Analysis,                                                                   ~type,    ~cond,  ~node, ~out,
+  "Key: more-than-expected engagement → high-arousal positive",                "a",      "more", "hap", NA,
+  "1. Less-than-expected engagement → low-arousal negative",                   "a",      "less", "lan", NA,
+  "2. More-than-expected → high-arousal positive → posting frequency (indirect)", "b",   "more", "hap", "pf",
+  "3. More-than-expected engagement → content change (direct)",                "direct", "more", NA,    "cc"
+)
+planned_table <- function(paths) {
+  planned |>
+    left_join(select(paper_paths, type, cond, node, out, original = est), by = c("type", "cond", "node", "out")) |>
+    left_join(paths, by = c("type", "cond", "node", "out")) |>
+    transmute(Analysis, Original = sprintf("%.2f", original),
+              Replication = sprintf("%.2f%s", est, star),
+              `95% CrI` = sprintf("[%.2f, %.2f]", lower, upper),
+              `Posterior p` = sprintf("%.3f", post_p),
+              `CrI includes original` = ifelse(original >= lower & original <= upper, "yes", "no"))
+}
+
+# The key statistic: more-than-expected engagement -> high-arousal positive emotions, both in
+# slider points and standardised.
+key_effect <- function(model, dat, paths) {
+  draws <- model$draws$b_hap_more
+  std <- filter(paths, type == "a", cond == "more", node == "hap")
+  tibble(N = n_distinct(dat$id),
+         b = median(draws), b_low = quantile(draws, .025), b_high = quantile(draws, .975),
+         beta = std$est, beta_low = std$lower, beta_high = std$upper, post_p = std$post_p)
+}
+
+# ---- Coefficient plot: every standardised path, for any number of studies ----------------
+# The original reports no intervals for the standardised paths, so it is drawn as a point.
+path_label <- function(type, cond, node, out) {
+  from <- c(more = "More", less = "Less")[cond]
+  case_when(type == "a"      ~ paste(from, "→", emotions[node]),
+            type == "b"      ~ paste(from, "→", emotions[node], "→", outcomes[out]),
+            type == "direct" ~ paste(from, "→", outcomes[out]))
+}
+coef_plot <- function(...) {
+  studies <- list(...)
+  studies <- studies[!map_lgl(studies, is.null)]
+  type_names <- c(a = "Engagement → emotion", direct = "Engagement → behaviour (direct)",
+                  b = "Engagement → emotion → behaviour (indirect)")
+  df <- imap_dfr(studies, ~ mutate(.x, Study = .y)) |>
+    mutate(Study = factor(Study, levels = names(studies)),
+           path  = fct_rev(fct_inorder(path_label(type, cond, node, out))),
+           type  = factor(type_names[type], levels = type_names))
+  colours <- set_names(c("grey45", "#1E6E76", "#B8792A")[seq_along(studies)], names(studies))
+  dodge <- position_dodge(width = 0.6, orientation = "y", reverse = TRUE)
+  ggplot(df, aes(x = est, y = path, colour = Study)) +
+    geom_vline(xintercept = 0, colour = "grey70") +
+    geom_linerange(aes(xmin = lower, xmax = upper), position = dodge, na.rm = TRUE) +
+    geom_point(position = dodge, size = 2) +
+    facet_grid(type ~ ., scales = "free_y", space = "free_y") +
+    scale_colour_manual(values = colours) +
+    labs(x = "Standardised coefficient (replication: posterior median and 95% credible interval)",
+         y = NULL, colour = NULL) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "top", strip.text.y = element_text(angle = 0, hjust = 0),
+          panel.grid.minor = element_blank())
+}
+
 fig_original <- plot_fig4(paper_paths, "Original study (Stsiampkouskaya et al., 2021)")
 ```
 
-```{r}
-#| label: path-data
-dat_a <- read_pilot("../data/replica-proj (psych 251)_October 18, 2026_23.49.csv")
-dat_a |> count(condition)
-glimpse(dat_a)
-```
-
-```{r}
-#| label: path-model
+```{stan}
+#| label: path-stan
+#| output.var: path_stan
 #| cache: true
-#| cache.extra: !expr list(dat_a, deparse(fit_path_model))
-fit_a <- fit_path_model(dat_a, file = "fit_path")
+// Two-level Bayesian path model, as in the paper's Mplus model.
+// Within person: condition -> emotions (a paths), and condition + emotions -> posting frequency
+// and content change (direct and b paths, probit link).
+// Between person: random intercepts for all six variables, correlated, with the person-level
+// covariates predicting the two outcomes.
+// Each emotion's within-person part is the observed score minus that person's LATENT mean
+// (estimated with the rest of the model), which is what Mplus's latent mean centring does.
+data {
+  int<lower=1> N;                          // observations (participant x condition)
+  int<lower=1> J;                          // participants
+  array[N] int<lower=1, upper=J> id;
+  matrix[N, 2] D;                          // more, less dummies, centred within person
+  matrix[N, 4] E;                          // emotion composites: hap, lap, han, lan
+  int<lower=2> K;                          // posting-frequency categories observed
+  array[N] int<lower=1, upper=K> pf;
+  array[N] int<lower=0, upper=1> cc;
+  int<lower=0> P;                          // person-level covariates
+  matrix[J, P] X;
+  cov_matrix[2] Sigma_D;                   // within-person covariance of the dummies
+}
+parameters {
+  vector[4] alpha;                         // grand mean of each emotion
+  matrix[4, 2] A;                          // a paths: condition -> emotion
+  vector<lower=0>[4] sigma_e;              // within-person residual SD of each emotion
+  cholesky_factor_corr[4] L_e;             // within-person residual correlations of emotions
+  ordered[K - 1] cut_pf;                   // posting-frequency thresholds
+  real alpha_cc;
+  matrix[2, 2] C;                          // direct paths: condition -> (pf, cc)
+  matrix[2, 4] B;                          // b paths: within-person emotion -> (pf, cc)
+  matrix[2, P] G;                          // covariates -> (pf, cc)
+  vector<lower=0>[6] tau;                  // between-person SDs: 4 emotions, pf, cc
+  cholesky_factor_corr[6] L_u;             // between-person correlations
+  matrix[6, J] z_u;
+}
+transformed parameters {
+  matrix[J, 6] u = (diag_pre_multiply(tau, L_u) * z_u)';
+}
+model {
+  matrix[J, 4] eta = rep_matrix(alpha', J) + u[, 1:4];   // latent person mean of each emotion
+  matrix[N, 4] Ew = E - eta[id];                         // latent-mean-centred emotions
+  matrix[4, 4] L_Sigma_e = diag_pre_multiply(sigma_e, L_e);
+  vector[J] cov_pf = X * G[1]';
+  vector[J] cov_cc = X * G[2]';
 
-# Convergence: Rhat should be < 1.01 (stricter than the paper's PSR < 1.1)
-max(rhat(fit_a), na.rm = TRUE)
-summary(fit_a)
+  for (n in 1:N)
+    E[n] ~ multi_normal_cholesky(eta[id[n]] + D[n] * A', L_Sigma_e);
+  pf ~ ordered_probit(u[id, 5] + cov_pf[id] + D * C[1]' + Ew * B[1]', cut_pf);
+  cc ~ bernoulli(Phi(alpha_cc + u[id, 6] + cov_cc[id] + D * C[2]' + Ew * B[2]'));
+
+  // Weakly informative priors: emotions are on the 0-100 slider scale, outcomes on the
+  // probit scale
+  alpha ~ normal(50, 30);
+  to_vector(A) ~ normal(0, 30);
+  sigma_e ~ student_t(3, 0, 20);
+  L_e ~ lkj_corr_cholesky(2);
+  cut_pf ~ normal(0, 3);
+  alpha_cc ~ normal(0, 3);
+  to_vector(C) ~ normal(0, 1);
+  to_vector(B) ~ normal(0, 1);
+  to_vector(G) ~ normal(0, 1);
+  tau[1:4] ~ student_t(3, 0, 20);
+  tau[5:6] ~ normal(0, 1);
+  L_u ~ lkj_corr_cholesky(2);
+  to_vector(z_u) ~ std_normal();
+}
+generated quantities {
+  // Model-implied within-person SDs, used to standardise the coefficients for Figure 4
+  vector[4] sd_e;                          // emotions
+  vector[2] sd_y;                          // latent probit response of pf and cc
+  {
+    matrix[4, 4] Sigma_e = multiply_lower_tri_self_transpose(diag_pre_multiply(sigma_e, L_e));
+    sd_e = sqrt(diagonal(quad_form(Sigma_D, A') + Sigma_e));
+    for (o in 1:2) {
+      vector[2] total = C[o]' + A' * B[o]';   // condition effect, direct + through emotions
+      sd_y[o] = sqrt(quad_form(Sigma_D, total) + quad_form(Sigma_e, B[o]') + 1);
+    }
+  }
+}
 ```
 
 ```{r}
-#| label: path-effects
-effect_tables(fit_a)
-```
-
-#### Model
-
-```{r}
-#| label: fig4-plot
-#| fig-width: 12
-#| fig-height: 7.6
-fig_replication <- plot_fig4(fig4_paths(fit_a, dat_a), "Replication (Pilot A)")
-fig_replication
-ggsave("figure4_replication.png", fig_replication, width = 12, height = 7.6, dpi = 300)
-
-# Optional side-by-side: install.packages("patchwork"), then
-# patchwork::wrap_plots(fig_original, fig_replication, ncol = 2)
-```
-
-### Pilot B Data
-
-```{r}
-#| label: path-data-b
-dat_b <- read_pilot("../data/replica-proj (psych 251)_October 27, 2026_17.03.csv")
-dat_b |> count(condition)
-glimpse(dat_b)
-```
-
-```{r}
-#| label: path-model-b
+#| label: fit-phases
 #| cache: true
-#| cache.extra: !expr list(dat_b, deparse(fit_path_model))
-fit_b <- fit_path_model(dat_b, file = "fit_path_b")
-
-# Convergence: Rhat should be < 1.01 (stricter than the paper's PSR < 1.1)
-max(rhat(fit_b), na.rm = TRUE)
-summary(fit_b)
+#| cache.extra: !expr list(phase1_file, phase2_file, deparse(read_phase), deparse(fit_path_model), path_stan@model_code)
+# Fit each phase that has data. Cached, so a render only refits when the data, the data
+# preparation or the model change.
+phase1 <- read_phase(phase1_file)
+phase2 <- read_phase(phase2_file)
+fit1 <- if (!is.null(phase1)) fit_path_model(phase1)
+fit2 <- if (!is.null(phase2)) fit_path_model(phase2)
 ```
 
 ```{r}
-#| label: path-effects-b
-effect_tables(fit_b)
+#| label: phase-paths
+have_data   <- !is.null(phase1)
+have_phase2 <- !is.null(phase2)
+paths1 <- if (have_data) fig4_paths(fit1, phase1)
+paths2 <- if (have_phase2) fig4_paths(fit2, phase2)
 ```
-
-#### Model
 
 ```{r}
-#| label: fig4-plot-b
-#| fig-width: 12
-#| fig-height: 7.6
-fig_pilot_b <- plot_fig4(fig4_paths(fit_b, dat_b), "Replication (Pilot B)")
-fig_pilot_b
-ggsave("figure4_pilotB.png", fig_pilot_b, width = 12, height = 7.6, dpi = 300)
+#| label: key-stats
+#| echo: false
+fmt_row <- function(study, r) {
+  if (is.null(r)) {
+    return(tibble(Study = study, N = "", `b (slider points)` = "not yet collected",
+                  `95% CrI` = "", `β` = "", `β 95% CrI` = "", `Posterior p` = ""))
+  }
+  tibble(Study = study, N = as.character(r$N),
+         `b (slider points)` = sprintf("%.1f", r$b),
+         `95% CrI` = if (is.na(r$b_low)) "" else sprintf("[%.1f, %.1f]", r$b_low, r$b_high),
+         `β` = sprintf("%.2f", r$beta),
+         `β 95% CrI` = if (is.na(r$beta_low)) "" else sprintf("[%.2f, %.2f]", r$beta_low, r$beta_high),
+         `Posterior p` = if (is.na(r$post_p)) "" else sprintf("%.3f", r$post_p))
+}
+bind_rows(
+  fmt_row("Original", tibble(N = original$n, b = original$b_more, b_low = NA, b_high = NA,
+                             beta = original$beta_more, beta_low = NA, beta_high = NA, post_p = NA)),
+  fmt_row("Phase 1: replication", if (have_data) key_effect(fit1, phase1, paths1)),
+  fmt_row("Phase 2: extension", if (have_phase2) key_effect(fit2, phase2, paths2))
+) |>
+  knitr::kable(align = "lrrrrrr",
+               caption = "Key comparison: effect of more-than-expected engagement (vs expected) on high-arousal positive emotions, within person. b is in 0-100 slider points; β is standardised at the within-person level. Replication values are posterior medians with 95% credible intervals; the original's intervals are not entered here.")
 ```
+
+# Phase 1: Replication
+
+## Introduction
+
+I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I was interested in investigating the emotions people want to feel and actually feel online. This project assisted in my goals of understanding the research process for studies in this field, and improved my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In the original study, the researchers found that:  
+  
+  1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
+  2. Posting frequecy was increased if users felt more excitement after receiving more engagement than expected.   
+  3. The content of their posts were also more likely to be of the same type if they received more engagement than expected.   
+  
+I wanted to replicate these three main findings in my project.   
+  
+The main experimental conditions in this study were whether a participant saw expected/more than expected/less than expected engagement (likes and comments) on a picture they select to be "posted". I used the same stimuli, e.g photos and scenario wording, as the original authors. The measures included 8 selected emotions from the PANAS-X scale, posting frequency and content change. The key statistical test I preregistered was a path analysis model with two levels (a within-individuals level and between-individuals level) that used a MCMC Bayesian estimation approach.   
+  
+One of the main challenges I predicted before starting the replication project was that I would not find the same results due to a difference in sample population. The original sample consisted of participants from the UK, whereas our sample consisted of participants from the US. As prior research indicated that there may be cross-national differences in the emotional content people spread online, there was a possibility that the sample difference may contribute to different results. 
+  
+A possible extension to this project would be to explore whether these effects still hold in contexts with very different cultural defaults, e.g East Asian contexts. I could also potentially look at negative comments or dislikes as a form of engagement, and explore how that shapes people's emotional responses to their posts.  
+
+## Methods
+
+### Power analysis
+
+```{r}
+#| label: original-values
+library(tidyverse)
+library(pwr)
+
+# Original study values (Stsiampkouskaya et al., 2021, Tables 3-4):
+# more-than-expected engagement -> high-arousal positive affect
+original <- list(
+  n         = 248,       # participants (each saw all three conditions)
+  b_more    = 17.521,    # unstandardised effect, 0-100 slider points
+  beta_more = 0.257,     # standardised effect
+  b_less    = -28.06     # "less engagement" effect, needed for the residual variance
+)
+
+# Back out d_z for the paired contrast (more vs expected)
+sd_x    <- sqrt((1/3) * (2/3))                                   # SD of a balanced 3-level dummy
+sd_y    <- abs(original$b_more) * sd_x / abs(original$beta_more) # within-level SD of outcome (~32.1)
+var_exp <- var(c(0, original$b_more, original$b_less)) * (2/3)   # variance explained by condition (~352)
+sd_res  <- sqrt(sd_y^2 - var_exp)                                # residual SD (~26.1)
+original_dz <- abs(original$b_more) / (sqrt(2) * sd_res)         # ~0.47
+```
+
+```{r}
+#| label: power
+power_rows <- map_dfr(c(0.80, 0.90, 0.95), function(pw) {
+  n_orig <- pwr.t.test(d = original_dz, power = pw, sig.level = 0.05,
+                       type = "paired", alternative = "two.sided")$n
+  n_half <- pwr.t.test(d = original_dz / 2, power = pw, sig.level = 0.05,
+                       type = "paired", alternative = "two.sided")$n
+  tibble(power = scales::percent(pw),
+         n_original_effect = ceiling(n_orig),
+         n_half_effect     = ceiling(n_half))
+})
+
+two_and_half <- ceiling(2.5 * original$n)
+
+knitr::kable(power_rows,
+             col.names = c("Power", "N at original effect", "N at 50% of original effect"),
+             caption = sprintf(
+               "Participants needed to detect the original effect (more-than-expected engagement on high-arousal positive affect: b = %.1f points, beta = %.2f, d_z = %.2f), paired design, two-sided alpha = .05.",
+               original$b_more, original$beta_more, original_dz))
+```
+
+**I therefore chose a sample size of 142 participants to acheive 80% power with an N at 50% of the original effect.**
+
+
+### Planned sample
+
+US residents on Prolific, fluent in English, and 18 or older. Participants must also own and regularly use an Instagram account ("the main criteria for participation in the present online experiment was defined as the ownership and regular use of an Instagram account", Stsiampkouskaya et al., 2021). Collect until 142 participants pass the exclusion criteria below.
+
+
+### Materials
+
+**From the original article:**
+
+All photos used in this study were acquired from the open-source photo repository Unsplash (Unsplash, n.d.). Each set of photos contained three distinct types: explorer, portrait, and scenery (Fig. 3). The portrait type showed a close-up photo of a person, the scenery type displayed a view with no people present, whilst the explorer type was a combination of both portrait and scenery types – a view with a person in a full or three-quarters height. The photos for both male and female groups were taken from the same photo shoot of the same person done by the same photographer in the same place, and therefore, have consistent aesthetics and can be perceived as taken by the same person in the same location on the same day. 
+
+... Additionally, for the purpose of this study it was necessary to ensure that the participants would consistently perceive the identified content types. An inter-rater reliability test was conducted in the Qualtrics software to guarantee the common acceptance and understanding of the content types by social media users. Two raters were presented with all 24 photos, and under each photo they were asked which type it relates to – portrait, scenery or explorer. The responses were analysed using Cohen’s kappa method, and the resulting level of agreement was substantial (Kappa = 0.687, z = 4.92, p < 0.001), with the overall percentage of agreement being 79.2%.
+
+**Deviations:**
+
+The article stated that all materials used are avaliable on request from the corresponding author (i.e it was not publicly accessible). In order to gather the photo set materials, I reached out to Dr. Stsiampkouskaya on 10/15/26 but have not received a response yet. Therefore, I followed the article's guidelines on generating the photos, but due to the lack of time and budget restrictions, was unable to validate the photo set as in the original study. 
+
+
+### Measures
+
+**From the original article:**
+
+*Social media engagement conditions*
+For the purpose of this paper, social media engagement is defined as the number of likes and comments received for a post. The social media engagement conditions (i.e., more engagement than expected and less engagement than expected) represent the independent variables in the study and were coded as dummy variables, with the expected engagement condition being the reference point for more than expected and less than expected engagement conditions.
+
+*Emotions* 
+The emotionality matrix designed for this study is based on the PANAS-X scale (Watson & Clark, 1994). However, as the study only focuses on fours specific affects (i.e., high-arousal positive, low-arousal positive, high-arousal negative, and low-arousal negative affects), eight emotions were selected with each pair representing one emotional state. Initially, the scale was used as suggested by the original instruction (a 5-point Likert scale). However, based on the results of the pilot study, the Likert scale was changed to a slider with a scale from 0 to 100, in order to have more variance in responses. The scale markers were, however, left unaltered, with 0 representing ‘Very Slightly or Not at all’, 25 - ‘A Little’, 50 - ‘Moderately’, 75 - ‘Quite a bit’, and 100 – ‘Extremely’. The participants were asked to indicate to what extent they experienced the eight outlined emotions by dragging the slider to their appropriate marker.
+
+... We had four distinct indices for emotional states in the present study: positive low-arousal, positive high-arousal, negative lowarousal, and negative high-arousal, retrieved by calculating averages across four pairs of correlated emotional states respectively (i.e., calm and at ease, excited and enthusiastic, sad and upset, and angry and distressed).
+
+*Posting frequency*  
+The posting frequency measure was represented by a 7-point ordinal scale. The question asked was ‘When would you consider posting your next photo (in your main feed, not stories)?’ The response options were the following (from 1 point to 7 points): in a few months, in a month, in a fortnight, in a week, in a few days, the next day, and the same day.
+
+*Content change*  
+In order to identify content change, each photo choice was recorded with regards to the image type (portrait, scenery, and explorer). A dichotomous variable was created which indicated whether the same or a different type of content was selected after each condition in comparison to the previous content choice; a value of 0 represented no content change (e.g. the same photo type was selected) and a value of 1 represented the change of content (e.g. a different photo type was selected).
+
+### Procedure
+
+**From the original article:**
+
+In order to understand the emotional impact of more than expected and less than expected engagement on social media users, and its subsequent influence on their posting frequency and content change decisions, an online experiment was designed and distributed using Qualtrics software. The experimental procedure followed the outline identified in Fig. 2.  On starting the experiment, the participants were first introduced to a participant information sheet and were required to provide their informed consent before they could proceed with the study. Those participants who did not provide their consent were automatically transferred to the ‘end-of-survey’ message.  
+
+In the introductory part of the experiment, the participants were asked to indicate the usual numbers of likes and comments they received for their Instagram posts. They were also asked how often they typically post photos on their accounts (e.g. ‘once a month’, ‘every day’, etc.). The participants also provided information about their gender, age, and country of origin in this section. On the following stages of the study, male participants were presented with the photos that have a male person in them (i.e. portrait and explorer content types). Respectively, female participants were presented with the photos that have a female person in them. Those participants who identified their gender as other were randomly allocated to either male or female group. 
+
+... After having completed the introductory session, the participants were instructed to imagine that they had returned from a trip and decided to share an image on Instagram. Accordingly, they were presented with a choice of three photos, each following the same aesthetics but representing a different content type – portrait, explorer or scenery. Once the participants made their choice, they were taken to the expected engagement stage. The instructions on the screen notified them that their chosen photo received their usual number of likes and comments (i. e., the same number as they had indicated in the introductory section). Following this message, the participants were presented with a number of questions. Firstly, they were asked to identify their emotional state by dragging the indicator on a scale from 0 to 100 for eight distinct emotions, each pair representing a particular affect with regards to valence and arousal (e.g., calm and at ease – low-arousal positive affect). Secondly, the participants were asked when they would share their next post on Instagram (e.g., ‘In a few months’, ‘The same day’). Lastly, they were presented with a choice of photos again. As in the previous instance, the images shared the same aesthetics, but represented three different content types – portrait, explorer, and scenery (Fig. 3a–b).
+
+From this stage on, the same process repeated for more than expected and less than expected engagement conditions, but with the key difference being the number of likes and comments participants received. In the more than expected engagement condition, the participants received three times more likes and comments than their usual number (e.g. if their usual number of likes were 65, the number of likes in the more than expected engagement condition would be 195 likes). In the less than expected engagement condition, the participants received three times fewer likes and comments than their usual number (e.g., if their usual number of likes were 65, the number of likes in less than expected engagement condition would be 22 likes); in this condition, the numbers of likes and comments were also rounded to the nearest whole number for the purpose of ecological validity (e.g., one cannot have 21.67 likes on Instagram). In each of the foregoing conditions the participants followed the same procedure as in the expected engagement condition. They indicated their emotional state, posting frequency (e.g., the estimated time of their next post), and their choice of content. The study finished with the participants receiving their usual numbers of likes and comments and a ‘thank you’ message.
+
+**Deviations:**
+
+I followed the Qualtrics survey structure as closely as possible to these guidelines. However, the specific wording used to imagine the scenario where participants select images, and the wording used to indicate the number of likes and comments received, was not specified, so I wrote them myself.
+
+**Study duration:**
+
+According to the authors, "The reimbursement rate for this study was recommended by Prolific based on the defined eligibility criteria and estimated time of completion (approximately 5 min) and identified as £6.19/hr. The actual average time of completion for the participants of the study was 5.65 min."
+
+Doing the study myself, and with non-naive pilot testers, the average time taken was ~5 minutes. 
+
+### Analysis plan
+
+**From the original article:**
+
+In order to investigate direct and indirect effects of the independent variables on the dependent variables, a path analysis model was built using the Mplus software. The model has two levels, a within-individuals level, and between-individuals level, and uses a Markov chain Monte Carlo (MCMC) Bayesian estimation approach to estimate the model. Because the dependent variables were measured using nominal and ordinal scales, the second part of the model were using a probit link function, while the first part of the model were estimated using conventional least square regressions. Credible intervals and standardised beta coefficients were identified for direct effects, indirect effects, factors, and covariates. In total, we ran 51,000 MCMC iterations, at which point we reached a Potential Scale Reduction factor of less than 1.1 (Gelman & Rubin, 1992).
+
+Usual number of likes, usual number of comments, usual posting frequency, age, and gender were employed as factors and covariates in the model. Usual posting frequency measure was represented as 7-point ordinal scale and answered the following question: ‘How often do you normally post photos on Instagram? (in your main feed, not stories)’. The response options were the following (from 1 point to 7 points): once in a few months, once a month, once a fortnight, once a week, one photo every day, and two or more photos a day. Age, usual number of likes, and usual number of comments were recorded as continuous numeric variables. Gender was coded as 1 for male, 2 for female, 3 for other. Because only two of the respondents identified as “other” we used only those with a binary gender identification for stanmodeling purposes.
+
+**Deviations**
+
+Mplus is not a free software and I do not have access to it, so I created the path analysis model using R. I used the rstan package in R, in order to keep the within and between persons level modelling, latent mean centering of emotions and the MCMC Bayesian approach.
+
+**Key analysis of interest:**
+The association between high arousal positive emotions and the more engagement than expected condition in the path model.
+
+**Additional analyses:**
+
+1. The association between low arousal negative emotions and the less engagement than expected condition.   
+2. A mediation of high arousal positive emotions between more engagement than expected condition and posting frequecy.   
+3. The association between content change and the more engagement than expected condition.
+
+**Exclusions:**
+
+1. Participants not residing in the US
+2. Participants for whom English is not their first language.
+3. Participants who are younger than 18. 
+4. Participants who do not have an Instagram account or do not regularly use Instagram
+5. Participants who did not consent to the study.
+6. Participants who did not complete the study.
+
+Prolific screens for country of residence, English as a first language and age. 
+
+
+### Differences from the original study
+
+| Aspect | Original study | This replication | Expected to matter? |
+|---|---|---|---|
+| Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demostrate that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
+| Wording | Currently unknown wording in study scenario | "Imagine you have just returned from a trip, and decide to share an image on Instagram. Of the three images below, which would you select to post?" | Not sure? Unless the vignettes are vastly different in the original study, I don't think there would be too much variation based on wording. |
+| Data analysis language | Mplus | R, using the rstan package | Mostly no, see below for differences and similarities.  |
+
+Similarities between the Mplus and R models
+
+Both models use two level within and between persons modelling, and latent mean center the emotions. They also use probit links for both behavioural outcomes (posting frequency and content change). The R model keeps the MCMC Bayesian estimation approach using rstan, and compute indirect effects the same way, computed as (engagement → emotion) × (emotion → behaviour).
+
+Differences between the Mplus and R models
+
+Mplus uses vague default priors and rstan uses weakly informative ones. Mplus and R use different sampling algorithms (Mplus = Gibbs sampler, runs 51000 iterations and stops once PSR < 1.1; rstan = Hamiltonian Monte Carlo, runs 4 chains x 4000 iterations, check for Rhat < 1.01). Mplus can handle missing answers, but the R model stops with an error if any variable has missing values (to solve this issue, all questions in the qualtrics survey are forced responses). The authors did not share their Mplus code so I've made 3 assumptions: 
+- between-persons level: participants' typical levels on the modelled variables (the 4 emotions, posting frequency, content change) can correlate, and covariates (likes, comments, posting frequency, gender, age) don't predict the emotions
+- within-person level: emotion residuals can correlate (e.g excitement and enthusiasm can correlate)
+- condition dummies are centered within person to make each person's latent emotion mean their average across the 3 conditions (and participants see all conditions, so centering doesn't change effect estimates)
 
 
 ### Methods addendum (post data collection)
@@ -856,43 +898,18 @@ if (!have_data) {
   cat(
     "::: {.callout-warning icon=false}\n",
     "## No Phase 1 data yet\n\n",
-    "There are no exported data for `", experiment_id, "` yet, so the sample and results ",
-    "sections are skipped. This is expected before data collection. Export with ",
-    "`npm run export -- --experiment ", experiment_id, " --key <path to your key>` and render again. ",
-    "If you have exported, check that `experiment_id` at the top of this file matches ",
-    "`EXPERIMENT.id` in `experiment.js`.\n",
+    "There is no Qualtrics export at `", phase1_file %||% "NULL", "` yet, so the sample and results ",
+    "sections are skipped. Put the export in `data/`, point `phase1_file` at the top of this file ",
+    "to it, and render again.\n",
     ":::\n", sep = "")
 }
 ```
 
 ```{r}
-#| label: phase1-data
-#| eval: !expr have_data
-# Loaded and excluded by read_phase(), under Key statistics, so Phase 1 and Phase 2 share one
-# exclusion rule.
-participants  <- phase1$participants
-trials        <- phase1$trials
-errors        <- phase1$errors
-complete      <- phase1$complete
-keep          <- phase1$keep
-n_no_response <- phase1$n_no_response
-```
-
-```{r}
 #| label: funnel
 #| eval: !expr have_data
-funnel_levels <- c("Started", "Completed", "Passed exclusion criteria")
-bind_rows(
-  participants |> mutate(step = "Started"),
-  complete     |> mutate(step = "Completed"),
-  keep         |> mutate(step = "Passed exclusion criteria")
-) |>
-  mutate(step = factor(step, levels = funnel_levels)) |>
-  count(step, condition, .drop = FALSE) |>
-  pivot_wider(names_from = condition, values_from = n, values_fill = 0) |>
-  mutate(Total = rowSums(across(-step))) |>
-  rename(Step = step) |>
-  knitr::kable(caption = "Participants at each step, by frame. Differences between frames in attrition or exclusion are a threat to validity and should be discussed.")
+knitr::kable(attr(phase1, "exclusions"),
+             caption = "Participants remaining after each exclusion step.")
 ```
 
 ```{r}
@@ -900,35 +917,20 @@ bind_rows(
 #| eval: !expr have_data
 #| echo: false
 #| results: asis
-cat(sprintf("Of %d participants who started, %d completed the study and %d met the exclusion criteria.",
-            nrow(participants), nrow(complete), nrow(keep)))
-if (n_no_response > 0) {
-  cat(sprintf(" %d completed session(s) contained no response to any speeded trial and were excluded on that basis.",
-              n_no_response))
-}
-if (nrow(keep) == 0) cat(" No participants remain for analysis yet, so the results below are empty.")
-cat("\n")
+steps <- attr(phase1, "exclusions")
+cat(sprintf("Of %d responses, %d met the exclusion criteria and were analysed.\n",
+            steps$n[1], steps$n[nrow(steps)]))
 ```
 
 ```{r}
 #| label: demographics
 #| eval: !expr have_data
-demo <- trials |>
-  filter(task == "demographics", participant_id %in% keep$participant_id) |>
-  mutate(resp = map(response, ~ fromJSON(.x))) |>
-  transmute(
-    participant_id,
-    age    = map_dbl(resp, ~ as.numeric(.x$age %||% NA)),
-    gender = map_chr(resp, ~ as.character(.x$gender %||% NA))
-  )
-
-if (nrow(demo) > 0) {
-  demo |>
-    summarise(N = n(), `Mean age` = round(mean(age, na.rm = TRUE), 1),
-              `SD age` = round(sd(age, na.rm = TRUE), 1),
-              `Age not given` = sum(is.na(age))) |>
-    knitr::kable(caption = "Age of the analysed sample.")
-}
+attr(phase1, "participants") |>
+  summarise(N = n(), `Mean age` = round(mean(age, na.rm = TRUE), 1),
+            `SD age` = round(sd(age, na.rm = TRUE), 1),
+            Female = sum(str_to_lower(gender) == "female"),
+            Male = sum(str_to_lower(gender) == "male")) |>
+  knitr::kable(caption = "Age and gender of the analysed sample.")
 ```
 
 #### Deviations from the preregistered plan
@@ -952,27 +954,29 @@ analysis code under Key statistics (open "Show the analysis code"). Describe any
 the data beyond that.
 :::
 
+```{r}
+#| label: data-prep
+#| eval: !expr have_data
+# One row per participant per condition: the four emotion composites (0-100), posting
+# frequency (ordinal), content change (0/1), the condition dummies, and the z-scored covariates.
+phase1 |> count(condition)
+glimpse(phase1)
+```
+
 ### Confirmatory analysis
+
+```{r}
+#| label: convergence
+#| eval: !expr have_data
+# Convergence: Rhat should be < 1.01 (stricter than the paper's PSR < 1.1)
+max(summary(fit1$stanfit)$summary[, "Rhat"], na.rm = TRUE)
+print(fit1$stanfit, pars = c("A", "C", "B", "G", "sigma_e", "tau"))
+```
 
 ```{r}
 #| label: confirmatory
 #| eval: !expr have_data
-framing <- trials |>
-  filter(task == "framing", participant_id %in% keep$participant_id) |>
-  select(participant_id, condition, choice)
-risky <- risky_counts(phase1)
-tab <- table(Frame = framing$condition, Choice = framing$choice)
-
-if (all(dim(tab) == c(2, 2))) {
-  # No continuity correction, so this test and the effect-size interval below agree: the
-  # uncorrected 2 x 2 chi-square is the same test as the two-proportion comparison.
-  print(tab)
-  print(chisq.test(tab, correct = FALSE))
-} else {
-  message("Chi-square not run: the frame-by-choice table is ", paste(dim(tab), collapse = " x "),
-          ". It needs both frames and both choices; with ", nrow(framing),
-          " participant(s) in the analysis set this is expected.")
-}
+effect_tables(fit1)
 ```
 
 ### Replication assessment
@@ -990,36 +994,9 @@ informative and should be reported as such (Experimentology §3.2).
 ```{r}
 #| label: comparison
 #| eval: !expr have_data
-orig <- diff_ci(original)
-rep  <- diff_ci(risky)
-
-if (!is.null(rep)) {
-  bind_rows(orig |> mutate(Study = "Original"), rep |> mutate(Study = "Phase 1: replication")) |>
-    transmute(Study, N,
-              `Difference (loss − gain)` = sprintf("%.0f points", 100 * estimate),
-              `95% CI` = sprintf("[%.0f, %.0f]", 100 * ci_low, 100 * ci_high),
-              p = format.pval(p, digits = 2, eps = 0.001)) |>
-    knitr::kable(caption = "Effect size: difference in the percentage choosing the risky program.")
-} else {
-  message("Replication effect size not computed yet: need at least one analysed participant in each frame.")
-}
-```
-
-```{r}
-#| label: comparison-verdict
-#| eval: !expr have_data
-#| echo: false
-#| results: asis
-if (!is.null(rep)) {
-  excludes_zero <- rep$ci_low > 0 | rep$ci_high < 0
-  includes_orig <- orig$estimate >= rep$ci_low & orig$estimate <= rep$ci_high
-  cat(sprintf(
-    "The replication's 95%% interval %s zero and %s the original estimate of %.0f points. ",
-    if (excludes_zero) "excludes" else "includes",
-    if (includes_orig) "includes" else "does not include",
-    100 * orig$estimate))
-  cat("These two facts are the starting point for the summary in the Discussion, not the conclusion.\n")
-}
+planned_table(paths1) |>
+  knitr::kable(align = "lrrrrr",
+               caption = "Preregistered analyses: standardised coefficients, original (Stsiampkouskaya et al., 2021, Figure 4 / Tables 4-6) and Phase 1 replication (posterior median, 95% credible interval, one-tailed posterior p). * 95% and ** 99% credible interval excludes 0.")
 ```
 
 ::: {.callout-tip icon=false}
@@ -1057,10 +1034,21 @@ caption. If the original reported no variability, say so rather than leaving it 
 ```{r}
 #| label: fig-comparison
 #| eval: !expr have_data
-#| fig-cap: "Percentage choosing the risky program in each frame, original study and Phase 1 replication. Error bars are 95% confidence intervals."
-#| fig-width: 7
-#| fig-height: 4
-comparison_plot(Original = original, `Phase 1: replication` = risky)
+#| fig-cap: "Path model, original study (top; Stsiampkouskaya et al., 2021, Figure 4) and Phase 1 replication (bottom). Standardised coefficients."
+#| fig-width: 12
+#| fig-height: 15.2
+fig_replication <- plot_fig4(paths1, "Phase 1 replication")
+ggsave("figure4_replication.png", fig_replication, width = 12, height = 7.6, dpi = 300)
+patchwork::wrap_plots(fig_original, fig_replication, ncol = 1)
+```
+
+```{r}
+#| label: fig-coefficients
+#| eval: !expr have_data
+#| fig-cap: "Every standardised path in the model, original study (Stsiampkouskaya et al., 2021, Figure 4 / Tables 4-6) and Phase 1 replication. The original reports no intervals for these coefficients; replication bars are 95% credible intervals."
+#| fig-width: 9
+#| fig-height: 9
+coef_plot(Original = paper_paths, `Phase 1: replication` = paths1)
 ```
 
 ### Exploratory analyses
@@ -1071,35 +1059,6 @@ comparison_plot(Original = original, `Phase 1: replication` = risky)
 Any follow-up analyses (optional). Label them clearly as exploratory: they were not planned, so
 they generate hypotheses rather than test them.
 :::
-
-```{r}
-#| label: exploratory-rt
-#| eval: !expr have_data
-ld <- trials |>
-  filter(task == "lexical_decision", participant_id %in% keep$participant_id) |>
-  mutate(correct = as.logical(correct), is_word = as.logical(is_word), rt = as.numeric(rt)) |>
-  filter(correct, !is.na(rt))
-
-if (nrow(ld) > 0) {
-  ld |>
-    group_by(`Real word` = is_word) |>
-    summarise(`Mean RT (ms)` = round(mean(rt)), `SD (ms)` = round(sd(rt)), Trials = n(), .groups = "drop") |>
-    knitr::kable(caption = "Exploratory: lexical-decision response times, correct trials only.")
-} else {
-  message("No correct lexical-decision trials with a response time yet.")
-}
-```
-
-```{r}
-#| label: data-quality
-#| eval: !expr have_data
-if (nrow(errors) > 0) {
-  errors |> select(any_of(c("at", "trial_index", "message"))) |> head(20) |>
-    knitr::kable(caption = "JavaScript errors reported from participants' browsers.")
-} else {
-  message("No errors were reported from participants' browsers.")
-}
-```
 
 ## Discussion
 
@@ -1196,43 +1155,19 @@ have it and the original's otherwise.
 
 ```{r}
 #| label: phase2-power
-phase2_n_per_group <- 150   # planned analysed participants per condition in Phase 2
+phase2_n <- 142   # planned analysed participants in Phase 2 (each sees all three conditions)
 
-p1_counts <- if (have_data) risky_counts(phase1)
-p1_stats  <- if (have_data) diff_ci(p1_counts)
-basis <- if (!is.null(p1_stats)) {
-  list(gain = p1_counts$risky[p1_counts$condition == "gain"] / p1_counts$n[p1_counts$condition == "gain"],
-       loss = p1_counts$risky[p1_counts$condition == "loss"] / p1_counts$n[p1_counts$condition == "loss"],
-       source = "Phase 1")
-} else {
-  list(gain = original_p_gain, loss = original_p_loss, source = "the original study")
-}
-
-# Expected 95% CI half-width on the difference at n per condition.
-half_width <- function(n) 1.96 * sqrt(basis$gain * (1 - basis$gain) / n + basis$loss * (1 - basis$loss) / n)
-power_at <- function(n, p1, p2) {
-  tryCatch(power.prop.test(n = n, p1 = p1, p2 = p2, sig.level = 0.05)$power, error = function(e) NA)
-}
-
-rows <- tibble(
-  Study = c(if (!is.null(p1_stats)) "Phase 1 (actual)", "Phase 2 (planned)"),
-  `N analysed` = c(if (!is.null(p1_stats)) p1_stats$N, 2 * phase2_n_per_group),
-  `95% CI half-width` = c(if (!is.null(p1_stats)) sprintf("±%.0f points", 100 * (p1_stats$ci_high - p1_stats$ci_low) / 2),
-                          sprintf("±%.0f points (expected)", 100 * half_width(phase2_n_per_group)))
-)
-knitr::kable(rows, caption = sprintf("Precision of the key estimate, Phase 2 expected values based on %s.", basis$source))
-
+# Power of the key test (paired contrast, more vs expected) at the planned N, using the
+# original study's d_z from the power analysis above.
 tibble(
-  `Effect to detect` = c(sprintf("Original: %.0f points", 100 * (original_p_loss - original_p_gain)),
-                         if (!is.null(p1_stats)) sprintf("Phase 1: %.0f points", 100 * p1_stats$estimate),
-                         sprintf("Half the original: %.0f points", 50 * (original_p_loss - original_p_gain))),
+  `Effect to detect` = c(sprintf("Original: d_z = %.2f", original_dz),
+                         sprintf("Half the original: d_z = %.2f", original_dz / 2)),
   `Power at planned N` = scales::percent(c(
-    power_at(phase2_n_per_group, original_p_gain, original_p_loss),
-    if (!is.null(p1_stats)) power_at(phase2_n_per_group, basis$gain, basis$loss),
-    power_at(phase2_n_per_group, original_p_gain, original_p_gain + (original_p_loss - original_p_gain) / 2)
+    pwr::pwr.t.test(n = phase2_n, d = original_dz, type = "paired")$power,
+    pwr::pwr.t.test(n = phase2_n, d = original_dz / 2, type = "paired")$power
   ), accuracy = 1)
 ) |>
-  knitr::kable(caption = sprintf("Power of the Phase 2 key test at %d per condition, two-sided alpha = .05.", phase2_n_per_group))
+  knitr::kable(caption = sprintf("Power of the Phase 2 key test at N = %d, two-sided alpha = .05.", phase2_n))
 ```
 
 ## Analysis plan
@@ -1260,9 +1195,8 @@ if (!have_phase2) {
   cat(
     "::: {.callout-warning icon=false}\n",
     "## No Phase 2 data yet\n\n",
-    "There are no exported data for `", experiment_id_phase2, "` yet, so the Phase 2 results are ",
-    "skipped. Export with `npm run export -- --experiment ", experiment_id_phase2,
-    " --key <path to your key>` once Phase 2 has run.\n",
+    "There is no Phase 2 Qualtrics export yet, so the Phase 2 results are skipped. Set ",
+    "`phase2_file` at the top of this file once Phase 2 has run.\n",
     ":::\n", sep = "")
 }
 ```
@@ -1270,27 +1204,20 @@ if (!have_phase2) {
 ```{r}
 #| label: phase2-results
 #| eval: !expr have_phase2
-p2_counts <- risky_counts(phase2)
-p2_stats  <- diff_ci(p2_counts)
-cat(sprintf("Phase 2: %d started, %d completed, %d analysed.\n",
-            nrow(phase2$participants), nrow(phase2$complete), nrow(phase2$keep)))
-if (!is.null(p2_stats)) {
-  p_text <- if (p2_stats$p < 0.001) "p < .001" else sprintf("p = %.3f", p2_stats$p)
-  cat(sprintf("Key comparison: %.0f points [%.0f, %.0f], chi-square(1) = %.2f, %s.\n",
-              100 * p2_stats$estimate, 100 * p2_stats$ci_low, 100 * p2_stats$ci_high,
-              p2_stats$statistic, p_text))
-}
+knitr::kable(attr(phase2, "exclusions"), caption = "Phase 2 participants remaining after each exclusion step.")
+max(summary(fit2$stanfit)$summary[, "Rhat"], na.rm = TRUE)
+planned_table(paths2) |>
+  knitr::kable(align = "lrrrrr",
+               caption = "Preregistered analyses: standardised coefficients, original and Phase 2 (posterior median, 95% credible interval, one-tailed posterior p).")
 ```
 
 ```{r}
 #| label: fig-phase2
 #| eval: !expr have_phase2
-#| fig-cap: "Percentage choosing the risky program in each frame: original study, Phase 1 replication, and Phase 2 extension. Error bars are 95% confidence intervals."
-#| fig-width: 8
-#| fig-height: 4
-comparison_plot(Original = original,
-                `Phase 1: replication` = if (have_data) risky_counts(phase1),
-                `Phase 2: extension` = risky_counts(phase2))
+#| fig-cap: "Every standardised path in the model: original study, Phase 1 replication, and Phase 2 extension. Replication bars are 95% credible intervals."
+#| fig-width: 9
+#| fig-height: 10
+coef_plot(Original = paper_paths, `Phase 1: replication` = paths1, `Phase 2: extension` = paths2)
 ```
 
 
