@@ -46,11 +46,15 @@ library(tidyverse)
 library(rstan)
 options(mc.cores = 4)
 
-# The Qualtrics export each phase is analysed from. Phase 1 points at the current data: Pilot B
-# for now, the full sample once it is collected. Leave phase2_file as NULL until Phase 2 runs.
-# A NULL or missing file makes that phase's sections skip themselves.
-phase1_file <- "../data/replica-proj (psych 251)_October 27, 2026_17.03.csv"
+# The Qualtrics export each phase is analysed from. Leave phase2_file as NULL until Phase 2
+# runs. A NULL or missing file makes that phase's sections skip themselves.
+phase1_file <- "../data/replica-proj (psych 251)_November 4, 2026_09.28.csv"
 phase2_file <- NULL
+
+# The export holds every response since the survey opened, pilots included. Responses started
+# before a phase's first day of data collection are dropped (Phase 1: the preregistration date).
+phase1_start <- as.Date("2026-11-04")
+phase2_start <- NULL
 ```
 
 ```{r}
@@ -93,7 +97,7 @@ original_dz <- original$b_more / (sqrt(2) * sd_res)            # paired effect s
 ## Project links
 
 - **Original paper:** Stsiampkouskaya, K., Joinson, A., Piwek, L., & Ahlbom, C.-P. (2021). Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model. Computers in Human Behavior, 124, 106940. https://doi.org/10.1016/j.chb.2021.106940
-- **Preregistration:** [OSF registration](https://osf.io/XXXXX) *(registered YYYY-MM-DD, before final data collection)*
+- **Preregistration:** [OSF registration](https://osf.io/mg7ak/overview?view_only=5ff15b94ecda430f94c563e4322a44bc) *(registered 2026-11-04, before final data collection)*
 - **Live experiment:** <https://stanforduniversity.qualtrics.com/jfe/form/SV_0vaRIrjek5Xb4Zo>
 - **Repository:** <https://github.com/psych251/Stsiampkouskaya2021> (experiment code, data, and this report)
 :::
@@ -176,27 +180,30 @@ outs <- names(outcomes)
 
 # ---- Read a Qualtrics export into one row per participant per condition --------------------
 # Returns NULL if that phase has no data yet, which is how every section below knows to skip
-# itself. Exclusions: anyone who did not consent, did not finish, or did not answer "Yes" to
-# owning and regularly using an Instagram account (a blank counts as not "Yes"); then, as in
-# the paper, anyone whose gender is not female or male. The counts at each step are attached
-# as attr(dat, "exclusions"), and one row per analysed participant (raw age and gender) as
-# attr(dat, "participants").
-read_phase <- function(data_file) {
+# itself. Exclusions, in order: Qualtrics survey previews (test runs); responses started
+# before start_date (pilots); anyone who did not consent, did not finish, or did not answer
+# "Yes" to owning and regularly using an Instagram account (a blank counts as not "Yes"); then,
+# as in the paper, anyone whose gender is not female or male. The counts at each step are
+# attached as attr(dat, "exclusions"), and one row per analysed participant (raw age and
+# gender) as attr(dat, "participants").
+read_phase <- function(data_file, start_date = NULL) {
   if (is.null(data_file) || !file.exists(data_file)) return(NULL)
   # Rows 2-3 of a Qualtrics export are question text / ImportId, so they are dropped.
   raw <- read_csv(data_file, col_types = cols(.default = col_character()),
                   name_repair = "unique_quiet") |>
     slice(-(1:2))
 
-  keep <- tibble(
-    consented   = str_starts(coalesce(raw$consent, ""), "I agree"),
-    finished    = str_to_lower(coalesce(raw$Finished, "")) == "true",
-    own_account = str_to_lower(str_squish(coalesce(raw$own_account, ""))) == "yes"
+  started <- as.Date(str_sub(raw$StartDate, 1, 10))
+  rules <- list(
+    "Not a survey preview"               = coalesce(raw$Status, "") != "Survey Preview",
+    "Started during data collection"     = is.null(start_date) | (!is.na(started) & started >= start_date),
+    "Consented"                          = str_starts(coalesce(raw$consent, ""), "I agree"),
+    "Finished"                           = str_to_lower(coalesce(raw$Finished, "")) == "true",
+    "Owns and uses an Instagram account" = str_to_lower(str_squish(coalesce(raw$own_account, ""))) == "yes"
   )
-  n_steps <- c(nrow(raw), sum(keep$consented),
-               sum(keep$consented & keep$finished),
-               sum(keep$consented & keep$finished & keep$own_account))
-  raw <- raw[keep$consented & keep$finished & keep$own_account, ]
+  passed  <- accumulate(rules, `&`)               # passed every rule up to and including this one
+  n_steps <- c(Responses = nrow(raw), map_int(passed, sum))
+  raw <- raw[last(passed), ]
 
   needed <- paste0("photo_choice", rep(1:4, each = 2), c("_w", "_m"))
   stopifnot("Missing photo-choice columns" = all(needed %in% names(raw)))
@@ -249,9 +256,8 @@ read_phase <- function(data_file) {
 
   stopifnot(nrow(dat) == 3 * n_distinct(dat$id))
   attr(dat, "exclusions") <- tibble(
-    Step = c("Responses", "Consented", "Finished", "Owns and uses an Instagram account",
-             "Gender female or male (analysed)"),
-    n    = c(n_steps, nrow(wide))
+    Step = c(names(n_steps), "Gender female or male (analysed)"),
+    n    = c(unname(n_steps), nrow(wide))
   )
   attr(dat, "participants") <- select(wide, id, age = age_years, gender)
   dat
@@ -658,11 +664,11 @@ generated quantities {
 ```{r}
 #| label: fit-phases
 #| cache: true
-#| cache.extra: !expr list(phase1_file, phase2_file, deparse(read_phase), deparse(fit_path_model), path_stan@model_code)
+#| cache.extra: !expr list(phase1_file, phase2_file, phase1_start, phase2_start, tools::md5sum(c(phase1_file, phase2_file)), deparse(read_phase), deparse(fit_path_model), path_stan@model_code)
 # Fit each phase that has data. Cached, so a render only refits when the data, the data
 # preparation or the model change.
-phase1 <- read_phase(phase1_file)
-phase2 <- read_phase(phase2_file)
+phase1 <- read_phase(phase1_file, phase1_start)
+phase2 <- read_phase(phase2_file, phase2_start)
 fit1 <- if (!is.null(phase1)) fit_path_model(phase1)
 fit2 <- if (!is.null(phase2)) fit_path_model(phase2)
 ```
@@ -707,7 +713,7 @@ bind_rows(
 I chose to replicate Stsiampkouskaya et al. (2021)'s paper "Emotional responses to likes and comments regulate posting frequency and content change behaviour on social media: An experimental study and mediation model", as I was interested in investigating the emotions people want to feel and actually feel online. This project assisted in my goals of understanding the research process for studies in this field, and improved my theoretical knowledge in the realm of ideal and actual affect, especially on social media. In the original study, the researchers found that:  
   
   1. Social media users in an experimental setting felt more excited after receiving more engagement than expected, and upset when receiving less engagement than expected.   
-  2. Posting frequecy was increased if users felt more excitement after receiving more engagement than expected.   
+  2. Posting frequency was increased if users felt more excitement after receiving more engagement than expected.   
   3. The content of their posts were also more likely to be of the same type if they received more engagement than expected.   
   
 I wanted to replicate these three main findings in my project.   
@@ -863,7 +869,7 @@ Prolific screens for country of residence, English as a first language and age.
 
 | Aspect | Original study | This replication | Expected to matter? |
 |---|---|---|---|
-| Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demostrate that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
+| Sample | International sample of adults recruited on Prolific | Sample of adults from the US recruited on Prolific | Possibly. Tsai et al. (2006, 2007) have demonstrated that there are cultural differences in the valuation of high arousal and low arousal positive emotions, including online (Hsu et al., 2021). |
 | Wording | Currently unknown wording in study scenario | "Imagine you have just returned from a trip, and decide to share an image on Instagram. Of the three images below, which would you select to post?" | Not sure? Unless the vignettes are vastly different in the original study, I don't think there would be too much variation based on wording. |
 | Data analysis language | Mplus | R, using the rstan package | Mostly no, see below for differences and similarities.  |
 
@@ -922,6 +928,8 @@ cat(sprintf("Of %d responses, %d met the exclusion criteria and were analysed.\n
             steps$n[1], steps$n[nrow(steps)]))
 ```
 
+I collected data from 142 people, however we have 158 survey responses as some Prolific participants started the study and then returned it before completing the survey.
+
 ```{r}
 #| label: demographics
 #| eval: !expr have_data
@@ -942,17 +950,11 @@ Any deviation from the preregistered plan above, or "None". Changes made after s
 belong here even if they seem minor, together with the reason.
 :::
 
+I removed people who were in pilot A and pilot B from the dataset when analyzing the full data.
+
 ## Results
 
 ### Data preparation
-
-::: {.callout-tip icon=false}
-## Guidance
-
-Data preparation follows the analysis plan. Loading and exclusions are done by the shared
-analysis code under Key statistics (open "Show the analysis code"). Describe anything you did to
-the data beyond that.
-:::
 
 ```{r}
 #| label: data-prep
@@ -981,16 +983,6 @@ effect_tables(fit1)
 
 ### Replication assessment
 
-::: {.callout-tip icon=false}
-## Guidance
-
-Judge the replication on effect sizes, not only on whether the key test is significant. Compare
-the replication estimate and its interval with the original: does the interval exclude zero, and
-does it include the original estimate? A significant result much smaller than the original, or
-a non-significant result whose interval still includes the original effect, are both
-informative and should be reported as such (Experimentology §3.2).
-:::
-
 ```{r}
 #| label: comparison
 #| eval: !expr have_data
@@ -998,38 +990,6 @@ planned_table(paths1) |>
   knitr::kable(align = "lrrrrr",
                caption = "Preregistered analyses: standardised coefficients, original (Stsiampkouskaya et al., 2021, Figure 4 / Tables 4-6) and Phase 1 replication (posterior median, 95% credible interval, one-tailed posterior p). * 95% and ** 99% credible interval excludes 0.")
 ```
-
-::: {.callout-tip icon=false}
-## Guidance: show the original next to your replication
-
-**Every report should have a figure that puts the original finding and your replication side by
-side.** It is the single most informative thing in a replication report: a reader can see at a
-glance whether the effect came back, and how its size compares. Make it however you can, in
-roughly this order of preference:
-
-1. **Replot both from numbers.** Enter the original's summary statistics (means or proportions,
-   with SDs, SEs or CIs, and Ns) in the original-study chunk at the top of this file, and plot
-   them on the same axes as yours. That is what the demo figure below does.
-2. **Replot the original from its data**, if the authors shared it or it is in an open
-   repository, using exactly the same plotting code as for your own data.
-3. **Show the original figure as an image** next to yours if neither is possible. Save a
-   screenshot of it, for example as `writeup/images/original-figure.png`, and lay the two out
-   in columns:
-
-   ````markdown
-   ::: {layout-ncol=2}
-   ![Original: Tversky & Kahneman (1981), Figure 1](images/original-figure.png)
-
-   ```{{r}}
-   # your replication plot here
-   ```
-   :::
-   ````
-
-Whichever you choose, use the same measure, scale, condition order and error-bar meaning for
-both panels, label which is which, and cite the source of the original values or figure in the
-caption. If the original reported no variability, say so rather than leaving it out silently.
-:::
 
 ```{r}
 #| label: fig-comparison
@@ -1053,60 +1013,23 @@ coef_plot(Original = paper_paths, `Phase 1: replication` = paths1)
 
 ### Exploratory analyses
 
-::: {.callout-tip icon=false}
-## Guidance
-
-Any follow-up analyses (optional). Label them clearly as exploratory: they were not planned, so
-they generate hypotheses rather than test them.
-:::
+In exploratory analyses which were not preregistered, there were two indirect paths found in this replication that were not found in the original study. More engagement led to high-arousal positivity which led to less content change (β = -0.19 [-0.39, 0.00]; original: β = 0.04 [not significant in the original]), and less engagement led to less high-arousal positivity which led to more content change (β = 0.13 [0.00, 0.28]; original: β = -0.07 [not significant in the original]). However, both intervals touch 0, so this evidence is weak.
 
 ## Discussion
 
 ### Summary of replication attempt
 
-::: {.callout-tip icon=false}
-## Guidance
-
-Open with one paragraph summarizing the result of the key analysis and your assessment of
-whether the original finding replicated, partially replicated, or failed to replicate. Base
-that judgment on the replication assessment above: the size of the effect relative to the
-original, not just the p value.
-:::
+In general, my findings mostly replicated the original findings, where the key effect replicated (and was stronger than the original), and 2 out of 3 of the additional main analyses replicated (although less engagement -> more low-arousal negativity had a weaker effect than the original). Like the authors' original results, I found that more engagement led to more high arousal positivity (β = 0.37 [0.28, 0.45]; original: β = 0.26). I also found that less engagement led to more low-arousal negativity (β = 0.20 [0.09, 0.30]; original: β = 0.39), and the indirect path where more engagement lead to more high-arousal positivity which led to increased posting frequency (β = 0.20 [0.06, 0.36]; original: β = 0.14). However, I did not replicate the direct effect of engagement on behavior, where more engagement directly lead to less content change (β = 0.12 [−0.06, 0.30]; original: β = -0.21).
 
 ### Commentary
 
-::: {.callout-tip icon=false}
-## Guidance
+As this replication was mostly a success, this means that the original authors' findings regarding engagement and emotion are quite robust. When people receive more engagement, they are more positive (more excited/enthusiastic), and when they receive less engagement than expected, they are more negative (sad/upset and angry/distressed). This, however, does not mean that there is high construct validity - it is very possible that the presence of leading questions would cause participants to answer in a certain way (as mentioned in feedback from the class during my presentation), which may in part be due to the fact that I did not have the survey wording and vignettes available to me when I created my materials. In addition, the weaker effects may be due to the US sample I used, and the smaller sample may have made the estimates less precise. 
 
-Open-ended commentary, none of it long: (a) what the exploratory analyses suggest; (b) what the
-replication means, for example whether the differences between your study and the original are
-definitely, plausibly, or unlikely to be moderators of the result; and (c) any objections or
-challenges raised by you or the original authors.
-:::
+Regarding the finding that didn't replicate and the new indirect paths in the exploratory analyses, this may mean that although I did not find a direct effect between engagement and content change, people are more excited or enthusiastic after more engagement and this high-arousal positivity is associated with them being less likely to switch photo type (and vice versa). This could explain why people (e.g influencers) have specific niches online, where they keep posting what worked for them. However, this finding should be interpreted with caution, as content change was a yes/no outcome, so it contains less information than the other scales.
 
 # Phase 2: Extension
 
-::: {.callout-tip icon=false}
-## Guidance: choosing your extension
-
-Follow the Extension guidelines page on Canvas. In brief:
-
-- **By default the extension is a best-practices modification of your Phase 1 experiment.** If
-  your replication did not succeed, it is a **rescue**: address the plausible reasons for the
-  failure. If it did succeed, it is an **upgrade**: make the estimate more precise. Typical
-  changes are better or more reliable measurement, more trials, a within-participant design
-  where that is legitimate, comprehension and manipulation checks, clearer instructions, or a
-  larger or better-targeted sample.
-- **If your scientific extension pitch was approved at Milestone 3 and your replication
-  succeeded, propose that instead:** the original conditions rerun unchanged, plus the one
-  added condition or manipulation, with a power analysis for the new comparison.
-- On either track you may add exploratory measures **at the end** of the study.
-- Every change is listed and tagged by category below; everything else stays identical.
-
-State your track on the line below, and delete the others.
-:::
-
-**Track:** Best-practices upgrade / Best-practices rescue / Scientific extension (approved at Milestone 3)
+**Track:** Best-practices upgrade
 
 ## Rationale
 
@@ -1119,6 +1042,10 @@ Phase 1 estimate least precise or least trustworthy, and how will the changes im
 scientific extension: what question does the added condition answer, and why does it follow from
 the original finding?
 :::
+
+As my replication of the original study mostly succeeded, I will be doing a best-practices upgrade. I will make modifications to the original survey design to improve its precision and trustworthiness. I plan to counterbalance the order of the conditions (not quite sure why the original authors didn't do this, might explain why the less-engagement effects were weaker since that was the last condition and participants are more tired of the study) and add a funnel debrief at the end of the survey and report how many guess the hypotheses. I would also like to a baseline measure of emotions before the first post to check if the ratings in the expected condition are neutral, however I'm not sure if participants will be even more fatigued if they have to complete the PANAS four times in total. 
+
+If possible, feedback from the class presentation suggested that I should collect UK participants as in the original study - is this feasible? I'm not sure if the IRB would allow us to run participants in a different country? In addition, if we choose to change the sample in addition to making design and measurement changes, this may confound the results as we wouldn't be sure which change led to those results.
 
 ## Changes from Phase 1
 
@@ -1134,24 +1061,14 @@ demo; replace them with yours.
 
 | # | Category | Phase 1 | Phase 2 | Why |
 |---|---|---|---|---|
-| 1 | Sample | 27 analysed participants | 300 analysed participants (150 per frame) | Phase 1's interval was too wide to distinguish the original effect from a much smaller one. |
-| 2 | Checks | No comprehension check | After the choice, participants say how many people are at risk (600) | Confirms participants read the scenario; failures are reported, and excluded only if preregistered. |
-| 3 | Exploratory measure | None | At the end: "How confident are you in your choice?" (1–7) | Exploratory only; collected after every confirmatory measure. |
+| 1 | Design | Fixed order of condition | Counterbalanced order | Reduces order effects |
+| 2 | Checks | No funnel debrief | Funnel debrief at the end of the study | Check how many participants guessed the hypothesis |
+| 3 | Measurement | No baseline measure of emotions | Baseline PANAS measure | Check to make sure expected condition emotions are neutral |
+| 4 (if possible) | Sample | US participants | UK participants | To keep sample the same as original
 
 Everything not listed above is identical to Phase 1.
 
 ## Power and sample
-
-::: {.callout-tip icon=false}
-## Guidance
-
-Justify the Phase 2 sample, and **state how you expect the estimate and its precision to compare
-with Phase 1**. For an upgrade, plan the sample around the confidence interval you want; for a
-rescue, around the power to detect the original effect, or the smallest effect you would still
-consider a successful replication; for a scientific extension, around the power to detect the new
-comparison. Set `phase2_n_per_group` in the code below; the table uses Phase 1's estimate if you
-have it and the original's otherwise.
-:::
 
 ```{r}
 #| label: phase2-power
@@ -1170,6 +1087,8 @@ tibble(
   knitr::kable(caption = sprintf("Power of the Phase 2 key test at N = %d, two-sided alpha = .05.", phase2_n))
 ```
 
+I plan to keep the sample size N = 142 due to the budget constraints. 142 participants cost ~$189, and we have a max budget of $200 for phase 2.
+
 ## Analysis plan
 
 ::: {.callout-tip icon=false}
@@ -1184,6 +1103,42 @@ exclusion rule (unchanged unless it is in the Changes table) and list any explor
 Run Phase 2 under a new `EXPERIMENT.id` in `experiment.js` (for example `smith2016-phase2`) and
 set `experiment_id_phase2` at the top of this file to match, so the two phases' data never mix.
 :::
+
+I plan to use the same analyses and model as Phase 1 on the phase 2 data. 
+
+**Key analysis of interest:**
+
+The association between high arousal positive emotions and the more engagement than expected condition in the path model.
+
+**Additional analyses:**
+
+1. The association between low arousal negative emotions and the less engagement than expected condition.   
+2. A mediation of high arousal positive emotions between more engagement than expected condition and posting frequecy.   
+3. The association between content change and the more engagement than expected condition.
+
+New:
+4. Order of condition as a predictor for effects on behavior (content change and posting frequency).
+5. Association between baseline emotion ratings and expected engagement condition ratings
+
+I will do the same comparison as phase 1 with the original (does the 95% credible interval exclude 0, and does it include the original value?), and also compare if the phase 2 estimate falls within the phase 1 interval (and vice versa).
+
+**Modelling** 
+
+I will continue using an MCMC Bayesian estimation approach using rstan, and compute indirect effects as (engagement → emotion) × (emotion → behaviour). The settings for the model will be: 4 chains × 4,000 iterations, Rhat < 1.01 check. 
+
+**Exclusions:**
+
+1. Participants for whom English is not their first language.
+2. Participants who are younger than 18. 
+3. Participants who do not have an Instagram account or do not regularly use Instagram
+4. Participants who did not consent to the study.
+5. Participants who did not complete the study.
+
+Prolific screens for country of residence ( maybe UK if possible?), English as a first language and age. 
+
+**Funnel debrief** 
+
+Participants will be coded as having guessed the hypotheses if they montion that likes or comments affect emotions or posting dcisions. I will report the number and percentage who guessed correctly. Guessing will not be an exclusion criteria, but I will do an exploratory sensitivity analysis to rerun without the people who guessed the hypotheses.
 
 ## Results
 
